@@ -32,6 +32,10 @@
         "src",
         "tests"
     ],
+    "dependencies": {
+        "node-binance-api": "^0.13.1",
+        "binance-api-node": "^0.11.36"
+    },
     "devDependencies": {
         "@reiryoku/eslint-config-reiryoku": "^1.0.0",
         "@reiryoku/mida": "^5.0.1",
