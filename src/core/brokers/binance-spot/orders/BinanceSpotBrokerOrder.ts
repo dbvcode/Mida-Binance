@@ -1,12 +1,11 @@
-import { Binance } from "binance-api-node";
 import {
     MidaDate,
     MidaBrokerOrder,
     MidaBrokerOrderStatus,
     GenericObject,
 } from "@reiryoku/mida";
+import { Binance } from "binance-api-node";
 import { BinanceSpotBrokerOrderParameters } from "#brokers/binance-spot/orders/BinanceSpotBrokerOrderParameters";
-import { BinanceSpotBrokerAccount } from "#brokers/binance-spot/BinanceSpotBrokerAccount";
 
 export class BinanceSpotBrokerOrder extends MidaBrokerOrder {
     readonly #binanceConnection: Binance;
@@ -71,11 +70,6 @@ export class BinanceSpotBrokerOrder extends MidaBrokerOrder {
                 orderId: Number(this.id),
             });
         }
-    }
-
-    get #binanceSpotBrokerAccount (): BinanceSpotBrokerAccount {
-        // @ts-ignore
-        return this.brokerAccount as BinanceSpotBrokerAccount;
     }
 
     #onUpdate (descriptor: GenericObject): void {
