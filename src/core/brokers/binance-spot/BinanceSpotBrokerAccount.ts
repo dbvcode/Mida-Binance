@@ -25,12 +25,14 @@ import {
 import { BinanceSpotBrokerAccountParameters } from "#brokers/binance-spot/BinanceSpotBrokerAccountParameters";
 import { BinanceSpotBrokerDeal } from "#brokers/binance-spot/deals/BinanceSpotBrokerDeal";
 import { BinanceSpotBrokerOrder } from "#brokers/binance-spot/orders/BinanceSpotBrokerOrder";
+import { Binance, NewOrderSpot } from "binance-api-node";
 
 export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
-    readonly #binanceHandler: GenericObject;
+    readonly #binanceConnection: Binance;
     readonly #assets: Map<string, MidaAsset>;
     readonly #symbols: Map<string, MidaSymbol>;
     readonly #ticksListeners: Map<string, boolean>;
+    readonly #closeSocketConnections: any[];
 
     public constructor ({
         id,
@@ -42,7 +44,7 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
         operativity,
         positionAccounting,
         indicativeLeverage,
-        binanceHandler,
+        binanceConnection,
     }: BinanceSpotBrokerAccountParameters) {
         super({
             id,
@@ -56,10 +58,11 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
             indicativeLeverage,
         });
 
-        this.#binanceHandler = binanceHandler;
+        this.#binanceConnection = binanceConnection;
         this.#assets = new Map();
         this.#symbols = new Map();
         this.#ticksListeners = new Map();
+        this.#closeSocketConnections = [];
     }
 
     public async preload (): Promise<void> {
@@ -68,31 +71,26 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
 
     public override async placeOrder (directives: MidaBrokerOrderDirectives): Promise<MidaBrokerOrder> {
         if (directives.stop) {
-            throw new Error("Stop orders are not supported on Binance Spot");
+            throw new Error("Binance Spot doesn't support stop orders");
         }
 
         const symbol: string = directives.symbol as string;
         const volume: number = directives.volume;
-        let plainOrder: GenericObject;
+        const binanceDirectives: GenericObject = {
+            symbol,
+            side: directives.direction === MidaBrokerOrderDirection.BUY ? "BUY" : "SELL",
+            quantity: volume.toString(),
+        };
 
-        if (directives.direction === MidaBrokerOrderDirection.BUY) {
-            if (directives.limit) {
-                plainOrder = await this.#binanceHandler.buy(symbol, volume, directives.limit, { type: "LIMIT", });
-            }
-            else {
-                plainOrder = await this.#binanceHandler.marketBuy(symbol, volume);
-            }
-        }
-        else {
-            if (directives.limit) {
-                plainOrder = await this.#binanceHandler.sell(symbol, volume, directives.limit, { type: "LIMIT", });
-            }
-            else {
-                plainOrder = await this.#binanceHandler.marketSell(symbol, volume);
-            }
+        if (directives.limit) {
+            binanceDirectives.price = directives.limit.toString();
         }
 
-        return this.#normalizePlainOrder(plainOrder);
+        if (directives.timeInForce) {
+            binanceDirectives.timeInForce = toBinanceSpotTimeInForce(directives.timeInForce);
+        }
+
+        return this.#normalizePlainOrder(await this.#binanceConnection.order(<NewOrderSpot> binanceDirectives));
     }
 
 
@@ -122,7 +120,7 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
     // @ts-ignore
     public override async getDeals (symbol: string): Promise<MidaBrokerDeal[]> {
         const deals: MidaBrokerDeal[] = [];
-        const plainDeals: GenericObject[] = await this.#binanceHandler.myTrades(symbol);
+        const plainDeals: GenericObject[] = await this.#binanceConnection.myTrades({ symbol, });
 
         for (const plainDeal of plainDeals) {
             deals.push(new BinanceSpotBrokerDeal({
@@ -146,7 +144,7 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
     }
 
     async #normalizePlainOrder (plainOrder: GenericObject): Promise<MidaBrokerOrder> {
-        const creationDate: MidaDate = new MidaDate(Number(plainOrder.time));
+        const creationDate: MidaDate | undefined = plainOrder.time ? new MidaDate(Number(plainOrder.time)) : undefined;
         let status: MidaBrokerOrderStatus;
 
         switch (plainOrder.status.toUpperCase()) {
@@ -192,14 +190,14 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
             direction: plainOrder.side === "BUY" ? MidaBrokerOrderDirection.BUY : MidaBrokerOrderDirection.SELL,
             id: plainOrder.orderId.toString(),
             isStopOut: false,
-            lastUpdateDate: plainOrder.updateTime ? new MidaDate(Number(plainOrder.updateTime)) : creationDate.clone(),
+            lastUpdateDate: plainOrder.updateTime ? new MidaDate(Number(plainOrder.updateTime)) : creationDate?.clone(),
             limitPrice: 0,
             position: undefined,
             purpose: plainOrder.side === "BUY" ? MidaBrokerOrderPurpose.OPEN : MidaBrokerOrderPurpose.CLOSE,
             requestedVolume: Number(plainOrder.origQty),
             status: plainOrder.status === "FILLED" ? MidaBrokerOrderStatus.EXECUTED : MidaBrokerOrderStatus.REQUESTED,
             symbol: plainOrder.symbol,
-            binanceHandler: this.#binanceHandler,
+            binanceHandler: this.#binanceConnection,
             timeInForce: MidaBrokerOrderTimeInForce.GOOD_TILL_CANCEL,
         });
     }
@@ -207,7 +205,7 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
     // @ts-ignore
     public override async getOrders (symbol: string): Promise<MidaBrokerOrder[]> {
         const orders: MidaBrokerOrder[] = [];
-        const plainOrders: GenericObject[] = await this.#binanceHandler.allOrders({ symbol, });
+        const plainOrders: GenericObject[] = await this.#binanceConnection.allOrders({ symbol, });
 
         for (const plainOrder of plainOrders) {
             orders.push(await this.#normalizePlainOrder(plainOrder));
@@ -218,7 +216,7 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
 
     public override async getPendingOrders (): Promise<MidaBrokerOrder[]> {
         const pendingOrders: MidaBrokerOrder[] = [];
-        const plainPendingOrders: GenericObject[] = await this.#binanceHandler.allOrders({ symbol, });
+        const plainPendingOrders: GenericObject[] = await this.#binanceConnection.allOrders({});
 
         for (const plainOrder of plainPendingOrders) {
             pendingOrders.push(await this.#normalizePlainOrder(plainOrder));
@@ -229,7 +227,7 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
 
     public async getAssets (): Promise<MidaAsset[]> {
         const assets: MidaAsset[] = [];
-        const plainAssets: GenericObject[] = (await this.#binanceHandler.accountInfo()).balances;
+        const plainAssets: GenericObject[] = (await this.#binanceConnection.accountInfo()).balances;
 
         for (const plainAsset of plainAssets) {
             assets.push(new MidaAsset({
@@ -245,7 +243,7 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
 
     public async getOwnedAssets (): Promise<Map<string, number>> {
         const ownedAssets: Map<string, number> = new Map();
-        const plainAssets: GenericObject[] = (await this.#binanceHandler.accountInfo()).balances;
+        const plainAssets: GenericObject[] = (await this.#binanceConnection.accountInfo()).balances;
 
         for (const plainAsset of plainAssets) {
             const ownedVolume: number = Number(plainAsset.free);
@@ -259,7 +257,7 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
     }
 
     public override async getSymbolLastTick (symbol: string): Promise<MidaSymbolTick> {
-        const lastPlainTick: GenericObject = await this.#binanceHandler.bookTickers(symbol);
+        const lastPlainTick: GenericObject = (await this.#binanceConnection.allBookTickers())[symbol];
 
         return new MidaSymbolTick({
             ask: Number(lastPlainTick.askPrice),
@@ -280,28 +278,23 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
 
     public override async getSymbolPeriods (symbol: string, timeframe: number, priceType?: MidaSymbolPriceType): Promise<MidaSymbolPeriod[]> {
         const periods: MidaSymbolPeriod[] = [];
-        const plainPeriods: any[] = this.#binanceHandler.candlesticks(symbol, normalizeTimeframe(timeframe));
+        const plainPeriods: GenericObject[] = await this.#binanceConnection.candles({
+            symbol,
+            // @ts-ignore
+            interval: toBinanceSpotTimeframe(timeframe),
+        });
 
         for (const plainPeriod of plainPeriods) {
-            const [
-                plainStartTimestamp,
-                plainOpen,
-                plainHigh,
-                plainLow,
-                plainClose,
-                plainVolume,
-            ] = plainPeriod;
-
             periods.push(new MidaSymbolPeriod({
                 symbol,
-                close: Number(plainClose),
-                high: Number(plainHigh),
-                low: Number(plainLow),
-                open: Number(plainOpen),
+                close: Number(plainPeriod.close),
+                high: Number(plainPeriod.high),
+                low: Number(plainPeriod.low),
+                open: Number(plainPeriod.open),
                 priceType: MidaSymbolPriceType.BID,
-                startDate: new MidaDate(Number(plainStartTimestamp)),
+                startDate: new MidaDate(Number(plainPeriod.openTime)),
                 timeframe,
-                volume: Number(plainVolume),
+                volume: Number(plainPeriod.volume),
             }));
         }
 
@@ -333,7 +326,7 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
             return;
         }
 
-        await this.#binanceHandler.websockets.bookTickers(symbol, (plainTick: GenericObject) => this.#onTick(plainTick));
+        this.#closeSocketConnections.push(this.#binanceConnection.ws.ticker(symbol, (plainTick: GenericObject) => this.#onTick(plainTick)));
 
         this.#ticksListeners.set(symbol, true);
     }
@@ -350,10 +343,14 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
         return true;
     }
 
-    public override async logout (): Promise<void> {}
+    public override async logout (): Promise<void> {
+        for (const closeSocketConnection of this.#closeSocketConnections) {
+            closeSocketConnection();
+        }
+    }
 
     public async getAssetDepositAddress (asset: string): Promise<string> {
-        return (await this.#binanceHandler.depositAddress({ coin: asset, })).address;
+        return (await this.#binanceConnection.depositAddress({ coin: asset, })).address;
     }
 
     async #onTick (plainTick: GenericObject): Promise<void> {
@@ -372,7 +369,7 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
     }
 
     async #preloadSymbols (): Promise<void> {
-        const plainSymbols: string[] = Object.keys(await this.#binanceHandler.prices());
+        const plainSymbols: string[] = Object.keys(await this.#binanceConnection.prices());
 
         this.#symbols.clear();
 
@@ -395,7 +392,7 @@ export class BinanceSpotBrokerAccount extends MidaBrokerAccount {
     }
 }
 
-export function normalizeTimeframe (timeframe: number): string {
+export function toBinanceSpotTimeframe (timeframe: number): string {
     switch (timeframe) {
         case 60: {
             return "1m";
@@ -431,7 +428,24 @@ export function normalizeTimeframe (timeframe: number): string {
             return "1M";
         }
         default: {
-            throw new Error("Unsupported timeframe");
+            throw new Error("Binance Spot doesn't support this timeframe");
+        }
+    }
+}
+
+export function toBinanceSpotTimeInForce (timeInForce: MidaBrokerOrderTimeInForce): string {
+    switch (timeInForce) {
+        case MidaBrokerOrderTimeInForce.GOOD_TILL_CANCEL: {
+            return "GTC";
+        }
+        case MidaBrokerOrderTimeInForce.FILL_OR_KILL: {
+            return "FOK";
+        }
+        case MidaBrokerOrderTimeInForce.IMMEDIATE_OR_CANCEL: {
+            return "IOC";
+        }
+        default: {
+            throw new Error("Binance Spot doesn't support this time in force");
         }
     }
 }

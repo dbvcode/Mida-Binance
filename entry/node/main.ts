@@ -17,8 +17,6 @@ const binance: GenericObject = Binance({
         const update = (a: any): void => {
             console.log(a);
         };
-
-        console.log(await binance.accountInfo());
     }
     catch (error: any) {
         console.log(error.body);

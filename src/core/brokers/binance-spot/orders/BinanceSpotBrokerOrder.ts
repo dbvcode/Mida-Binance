@@ -1,8 +1,16 @@
-import { GenericObject, MidaBrokerOrder, MidaBrokerOrderStatus, MidaDate } from "@reiryoku/mida";
+import { Binance } from "binance-api-node";
+import {
+    MidaDate,
+    MidaBrokerOrder,
+    MidaBrokerOrderStatus,
+    GenericObject,
+} from "@reiryoku/mida";
 import { BinanceSpotBrokerOrderParameters } from "#brokers/binance-spot/orders/BinanceSpotBrokerOrderParameters";
+import { BinanceSpotBrokerAccount } from "#brokers/binance-spot/BinanceSpotBrokerAccount";
 
 export class BinanceSpotBrokerOrder extends MidaBrokerOrder {
-    readonly #binanceHandler: GenericObject;
+    readonly #binanceConnection: Binance;
+    #closeSocketConnection?: any;
 
     public constructor ({
         id,
@@ -21,7 +29,7 @@ export class BinanceSpotBrokerOrder extends MidaBrokerOrder {
         position,
         rejectionType,
         isStopOut,
-        binanceHandler,
+        binanceConnection,
     }: BinanceSpotBrokerOrderParameters) {
         super({
             id,
@@ -42,15 +50,32 @@ export class BinanceSpotBrokerOrder extends MidaBrokerOrder {
             isStopOut,
         });
 
-        this.#binanceHandler = binanceHandler;
+        this.#binanceConnection = binanceConnection;
+        this.#closeSocketConnection = undefined;
 
-        this.#configureListeners();
+        // Listen events only if the order is not in a final state
+        if (
+            status !== MidaBrokerOrderStatus.CANCELLED &&
+            status !== MidaBrokerOrderStatus.REJECTED &&
+            status !== MidaBrokerOrderStatus.EXPIRED &&
+            status !== MidaBrokerOrderStatus.EXECUTED
+        ) {
+            this.#configureListeners();
+        }
     }
 
     public override async cancel (): Promise<void> {
         if (this.status === MidaBrokerOrderStatus.PENDING) {
-            await this.#binanceHandler.cancel(this.symbol, this.id);
+            await this.#binanceConnection.cancelOrder({
+                symbol: this.symbol,
+                orderId: Number(this.id),
+            });
         }
+    }
+
+    get #binanceSpotBrokerAccount (): BinanceSpotBrokerAccount {
+        // @ts-ignore
+        return this.brokerAccount as BinanceSpotBrokerAccount;
     }
 
     #onUpdate (descriptor: GenericObject): void {
@@ -69,21 +94,29 @@ export class BinanceSpotBrokerOrder extends MidaBrokerOrder {
             case "FILLED": {
                 status = MidaBrokerOrderStatus.EXECUTED;
 
+                this.#closeSocketConnection();
+
                 break;
             }
             case "PENDING_CANCEL":
             case "CANCELED": {
                 status = MidaBrokerOrderStatus.CANCELLED;
 
+                this.#closeSocketConnection();
+
                 break;
             }
             case "EXPIRED": {
                 status = MidaBrokerOrderStatus.EXPIRED;
 
+                this.#closeSocketConnection();
+
                 break;
             }
             case "REJECTED": {
                 status = MidaBrokerOrderStatus.REJECTED;
+
+                this.#closeSocketConnection();
 
                 break;
             }
@@ -93,18 +126,16 @@ export class BinanceSpotBrokerOrder extends MidaBrokerOrder {
             this.lastUpdateDate = lastUpdateDate;
         }
 
-        if (status !== this.status) {
+        if (this.status !== status) {
             this.onStatusChange(status);
         }
     }
 
     #configureListeners (): void {
-        const updateHandler: Function = (descriptor: GenericObject): void => {
+        this.#closeSocketConnection = this.#binanceConnection.ws.user((descriptor: GenericObject): void => {
             if (descriptor.e === "executionReport" && descriptor.i.toString() === this.id) {
                 this.#onUpdate(descriptor);
             }
-        };
-
-        this.#binanceHandler.websockets.userData(updateHandler, updateHandler);
+        });
     }
 }
