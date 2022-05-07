@@ -1,3 +1,3 @@
-import { MyPlugin } from "!/src/core/MyPlugin";
+import { BinancePlugin } from "#BinancePlugin";
 
-export default new MyPlugin();
+export default new BinancePlugin();

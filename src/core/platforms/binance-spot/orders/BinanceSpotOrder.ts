@@ -1,19 +1,19 @@
 import {
-    MidaDate,
-    MidaBrokerOrder,
-    MidaBrokerOrderStatus,
     GenericObject,
+    MidaDate,
+    MidaOrder,
+    MidaOrderStatus,
 } from "@reiryoku/mida";
 import { Binance } from "binance-api-node";
-import { BinanceSpotBrokerOrderParameters } from "#brokers/binance-spot/orders/BinanceSpotBrokerOrderParameters";
+import { BinanceSpotOrderParameters } from "#platforms/binance-spot/orders/BinanceSpotOrderParameters";
 
-export class BinanceSpotBrokerOrder extends MidaBrokerOrder {
+export class BinanceSpotOrder extends MidaOrder {
     readonly #binanceConnection: Binance;
     #closeSocketConnection?: any;
 
     public constructor ({
         id,
-        brokerAccount,
+        tradingAccount,
         symbol,
         requestedVolume,
         direction,
@@ -24,15 +24,14 @@ export class BinanceSpotBrokerOrder extends MidaBrokerOrder {
         creationDate,
         lastUpdateDate,
         timeInForce,
-        deals,
-        position,
-        rejectionType,
+        trades,
+        rejection,
         isStopOut,
         binanceConnection,
-    }: BinanceSpotBrokerOrderParameters) {
+    }: BinanceSpotOrderParameters) {
         super({
             id,
-            brokerAccount,
+            tradingAccount,
             symbol,
             requestedVolume,
             direction,
@@ -43,9 +42,8 @@ export class BinanceSpotBrokerOrder extends MidaBrokerOrder {
             creationDate,
             lastUpdateDate,
             timeInForce,
-            deals,
-            position,
-            rejectionType,
+            trades,
+            rejection,
             isStopOut,
         });
 
@@ -54,17 +52,17 @@ export class BinanceSpotBrokerOrder extends MidaBrokerOrder {
 
         // Listen events only if the order is not in a final state
         if (
-            status !== MidaBrokerOrderStatus.CANCELLED &&
-            status !== MidaBrokerOrderStatus.REJECTED &&
-            status !== MidaBrokerOrderStatus.EXPIRED &&
-            status !== MidaBrokerOrderStatus.EXECUTED
+            status !== MidaOrderStatus.CANCELLED &&
+            status !== MidaOrderStatus.REJECTED &&
+            status !== MidaOrderStatus.EXPIRED &&
+            status !== MidaOrderStatus.EXECUTED
         ) {
             this.#configureListeners();
         }
     }
 
     public override async cancel (): Promise<void> {
-        if (this.status === MidaBrokerOrderStatus.PENDING) {
+        if (this.status === MidaOrderStatus.PENDING) {
             await this.#binanceConnection.cancelOrder({
                 symbol: this.symbol,
                 orderId: Number(this.id),
@@ -74,19 +72,19 @@ export class BinanceSpotBrokerOrder extends MidaBrokerOrder {
 
     #onUpdate (descriptor: GenericObject): void {
         const lastUpdateDate: MidaDate = new MidaDate(Number(descriptor.E));
-        let status: MidaBrokerOrderStatus = MidaBrokerOrderStatus.REQUESTED;
+        let status: MidaOrderStatus = MidaOrderStatus.REQUESTED;
 
         switch (descriptor.X.toUpperCase()) {
             case "NEW": {
                 if (descriptor.o.toUpperCase() !== "MARKET") {
-                    status = MidaBrokerOrderStatus.PENDING;
+                    status = MidaOrderStatus.PENDING;
                 }
 
                 break;
             }
             case "PARTIALLY_FILLED":
             case "FILLED": {
-                status = MidaBrokerOrderStatus.EXECUTED;
+                status = MidaOrderStatus.EXECUTED;
 
                 this.#closeSocketConnection();
 
@@ -94,21 +92,21 @@ export class BinanceSpotBrokerOrder extends MidaBrokerOrder {
             }
             case "PENDING_CANCEL":
             case "CANCELED": {
-                status = MidaBrokerOrderStatus.CANCELLED;
+                status = MidaOrderStatus.CANCELLED;
 
                 this.#closeSocketConnection();
 
                 break;
             }
             case "EXPIRED": {
-                status = MidaBrokerOrderStatus.EXPIRED;
+                status = MidaOrderStatus.EXPIRED;
 
                 this.#closeSocketConnection();
 
                 break;
             }
             case "REJECTED": {
-                status = MidaBrokerOrderStatus.REJECTED;
+                status = MidaOrderStatus.REJECTED;
 
                 this.#closeSocketConnection();
 

@@ -3,7 +3,7 @@ import {
     MidaPluginActions,
 } from "@reiryoku/mida";
 
-export class MyPlugin extends MidaPlugin {
+export class BinancePlugin extends MidaPlugin {
     public constructor () {
         super({
             id: "my-plugin", // Plugin id, required
