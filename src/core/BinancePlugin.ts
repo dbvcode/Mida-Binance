@@ -6,10 +6,10 @@ import {
 export class BinancePlugin extends MidaPlugin {
     public constructor () {
         super({
-            id: "my-plugin", // Plugin id, required
-            name: "My Plugin", // Plugin name, required
-            version: "1.0.0", // Plugin version, required
-            description: "This plugin does nothing.", // Plugin description, optional
+            id: "2ae5e8d1-1101-4b9c-b6e1-e44497bb2803",
+            name: "Binance",
+            version: "1.0.0",
+            description: "",
         });
     }
 

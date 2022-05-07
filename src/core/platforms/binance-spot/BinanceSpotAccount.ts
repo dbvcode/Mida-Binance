@@ -1,7 +1,9 @@
 import {
     GenericObject,
-    MidaAsset, MidaAssetStatement,
+    MidaAsset,
+    MidaAssetStatement,
     MidaDate,
+    MidaEmitter,
     MidaOrder,
     MidaOrderDirection,
     MidaOrderDirectives,
@@ -26,7 +28,8 @@ import {
     Binance,
     CandlesOptions,
     MyTrade,
-    NewOrderSpot,
+    NewOrderSpot, ReconnectingWebSocketHandler,
+    Symbol as BinanceSymbol,
 } from "binance-api-node";
 import { BinanceSpotAccountParameters } from "#platforms/binance-spot/BinanceSpotAccountParameters";
 import { BinanceSpotTrade } from "#platforms/binance-spot/trades/BinanceSpotTrade";
@@ -34,6 +37,7 @@ import { BinanceSpotOrder } from "#platforms/binance-spot/orders/BinanceSpotOrde
 
 export class BinanceSpotAccount extends MidaTradingAccount {
     readonly #binanceConnection: Binance;
+    readonly #binanceEmitter: MidaEmitter;
     readonly #assets: Map<string, MidaAsset>;
     readonly #symbols: Map<string, MidaSymbol>;
     readonly #ticksListeners: Map<string, boolean>;
@@ -61,16 +65,18 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         });
 
         this.#binanceConnection = binanceConnection;
+        this.#binanceEmitter = new MidaEmitter();
         this.#assets = new Map();
         this.#symbols = new Map();
         this.#ticksListeners = new Map();
     }
 
-    public override async placeOrder (directives: MidaOrderDirectives): Promise<MidaOrder> {
-        if (directives.stop) {
-            throw new Error("Binance Spot doesn't support stop orders");
-        }
+    public async preload (): Promise<void> {
+        await this.#preloadSymbols();
+        await this.#configureListeners();
+    }
 
+    public override async placeOrder (directives: MidaOrderDirectives): Promise<MidaOrder> {
         if (directives.positionId || !directives.symbol) {
             throw new Error("Binance Spot doesn't support this order directives");
         }
@@ -91,13 +97,13 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             binanceOrderDirectives.timeInForce = toBinanceSpotTimeInForce(directives.timeInForce);
         }
 
-        return this.#normalizePlainOrder(await this.#binanceConnection.order(<NewOrderSpot> binanceOrderDirectives));
+        return this.#toMidaOrder(await this.#binanceConnection.order(<NewOrderSpot> binanceOrderDirectives));
     }
 
     public override async getBalance (): Promise<number> {
         const assetStatement: MidaAssetStatement = await this.#getAssetStatement(this.primaryAsset);
 
-        return assetStatement.freeVolume + assetStatement.lockedVolume;
+        return assetStatement.freeVolume + assetStatement.lockedVolume + assetStatement.borrowedVolume;
     }
 
     public override async getAssetBalance (asset: string): Promise<MidaAssetStatement> {
@@ -129,7 +135,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     public override async getEquity (): Promise<number> {
         const accountSnapshot: AccountSnapshot = await this.#binanceConnection.accountSnapshot({ type: "SPOT", });
 
-        // Return the total BTC balance if all the other assets were liquidated
+        // Return the total BTC balance if all the other assets were liquidated for it
         return Number(accountSnapshot.snapshotVos[0].data.totalAssetOfBtc);
     }
 
@@ -173,13 +179,13 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         return deals;
     }
 
-    async #normalizePlainOrder (plainOrder: GenericObject): Promise<MidaOrder> {
-        const creationDate: MidaDate | undefined = plainOrder.time ? new MidaDate(Number(plainOrder.time)) : undefined;
+    #toMidaOrder (binanceOrder: GenericObject): MidaOrder {
+        const creationDate: MidaDate | undefined = binanceOrder.time ? new MidaDate(Number(binanceOrder.time)) : undefined;
         let status: MidaOrderStatus;
 
-        switch (plainOrder.status.toUpperCase()) {
+        switch (binanceOrder.status.toUpperCase()) {
             case "NEW": {
-                if (plainOrder.type.toUpperCase() !== "MARKET") {
+                if (binanceOrder.type.toUpperCase() !== "MARKET") {
                     status = MidaOrderStatus.PENDING;
                 }
 
@@ -216,33 +222,49 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             tradingAccount: this,
             creationDate,
             trades: [],
-            direction: plainOrder.side === "BUY" ? MidaOrderDirection.BUY : MidaOrderDirection.SELL,
-            id: plainOrder.orderId.toString(),
+            direction: binanceOrder.side === "BUY" ? MidaOrderDirection.BUY : MidaOrderDirection.SELL,
+            id: binanceOrder.orderId.toString(),
             isStopOut: false,
-            lastUpdateDate: plainOrder.updateTime ? new MidaDate(Number(plainOrder.updateTime)) : creationDate?.clone(),
+            lastUpdateDate: binanceOrder.updateTime ? new MidaDate(Number(binanceOrder.updateTime)) : creationDate?.clone(),
             limitPrice: 0,
-            purpose: plainOrder.side === "BUY" ? MidaOrderPurpose.OPEN : MidaOrderPurpose.CLOSE,
-            requestedVolume: Number(plainOrder.origQty),
-            status: plainOrder.status === "FILLED" ? MidaOrderStatus.EXECUTED : MidaOrderStatus.REQUESTED,
-            symbol: plainOrder.symbol,
+            purpose: binanceOrder.side === "BUY" ? MidaOrderPurpose.OPEN : MidaOrderPurpose.CLOSE,
+            requestedVolume: Number(binanceOrder.origQty),
+            status: binanceOrder.status === "FILLED" ? MidaOrderStatus.EXECUTED : MidaOrderStatus.REQUESTED,
+            symbol: binanceOrder.symbol,
             binanceConnection: this.#binanceConnection,
-            timeInForce: MidaOrderTimeInForce.GOOD_TILL_CANCEL,
+            binanceEmitter: this.#binanceEmitter,
+            timeInForce: toMidaTimeInForce(binanceOrder.timeInForce),
         });
     }
 
     public override async getOrders (symbol: string): Promise<MidaOrder[]> {
         const binanceOrders: GenericObject[] = await this.#binanceConnection.allOrders({ symbol, });
-        const ordersPromises: Promise<MidaOrder>[] = [];
+        const executedOrders: MidaOrder[] = [];
 
         for (const binanceOrder of binanceOrders) {
-            ordersPromises.push(this.#normalizePlainOrder(binanceOrder));
+            const order = this.#toMidaOrder(binanceOrder);
+
+            if (order.isExecuted) {
+                executedOrders.push(order);
+            }
         }
 
-        return Promise.all(ordersPromises);
+        return executedOrders;
     }
 
     public override async getPendingOrders (): Promise<MidaOrder[]> {
-        return [];
+        const binanceOrders: GenericObject[] = await this.#binanceConnection.openOrders({});
+        const pendingOrders: MidaOrder[] = [];
+
+        for (const binanceOrder of binanceOrders) {
+            const order = this.#toMidaOrder(binanceOrder);
+
+            if (order.status === MidaOrderStatus.PENDING) {
+                pendingOrders.push(order);
+            }
+        }
+
+        return pendingOrders;
     }
 
     public async getAssets (): Promise<string[]> {
@@ -312,7 +334,8 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     }
 
     public override async getSymbolAveragePrice (symbol: string): Promise<number> {
-        return (await this.getSymbolBid(symbol) + await this.getSymbolAsk(symbol)) / 2;
+        // @ts-ignore
+        return Number((await this.#binanceConnection.avgPrice({ symbol, })).price);
     }
 
     public override async getSymbolPeriods (symbol: string, timeframe: number): Promise<MidaPeriod[]> {
@@ -386,25 +409,42 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     }
 
     async #preloadSymbols (): Promise<void> {
-        const binanceSymbols: string[] = Object.keys(await this.#binanceConnection.prices());
+        const binanceSymbols: BinanceSymbol[] = (await this.#binanceConnection.exchangeInfo()).symbols;
 
         this.#symbols.clear();
 
         for (const binanceSymbol of binanceSymbols) {
-            this.#symbols.set(binanceSymbol, new MidaSymbol({
-                baseAsset: "",
+            const volumeFilter: GenericObject | undefined = getBinanceSymbolFilterByType(binanceSymbol, "LOT_SIZE");
+
+            this.#symbols.set(binanceSymbol.symbol, new MidaSymbol({
+                baseAsset: binanceSymbol.baseAsset,
                 tradingAccount: this,
                 description: "",
-                digits: -1,
                 leverage: 0,
                 lotUnits: 1,
-                maxLots: -1,
-                minLots: -1,
-                quoteAsset: "",
-                symbol: binanceSymbol,
+                maxLots: volumeFilter ? Number(volumeFilter.maxQty) : -1,
+                minLots: volumeFilter ? Number(volumeFilter.minQty) : -1,
+                quoteAsset: binanceSymbol.quoteAsset,
+                symbol: binanceSymbol.symbol,
             }));
         }
     }
+
+    async #configureListeners (): Promise<void> {
+        await this.#binanceConnection.ws.user((descriptor: GenericObject): void => {
+            this.#binanceEmitter.notifyListeners("update", descriptor);
+        });
+    }
+}
+
+export function getBinanceSymbolFilterByType (binanceSymbol: BinanceSymbol, type: string): GenericObject | undefined {
+    for (const filter of binanceSymbol.filters) {
+        if (filter.filterType === type) {
+            return filter;
+        }
+    }
+
+    return undefined;
 }
 
 export function toBinanceSpotTimeframe (timeframe: number): string {
@@ -461,6 +501,23 @@ export function toBinanceSpotTimeInForce (timeInForce: MidaOrderTimeInForce): st
         }
         default: {
             throw new Error("Binance Spot doesn't support this time in force");
+        }
+    }
+}
+
+export function toMidaTimeInForce (timeInForce: string): MidaOrderTimeInForce {
+    switch (timeInForce.toUpperCase()) {
+        case "GTC": {
+            return MidaOrderTimeInForce.GOOD_TILL_CANCEL;
+        }
+        case "FOK": {
+            return MidaOrderTimeInForce.FILL_OR_KILL;
+        }
+        case "IOC": {
+            return MidaOrderTimeInForce.IMMEDIATE_OR_CANCEL;
+        }
+        default: {
+            throw new Error(`Unknown order time in force ${timeInForce}`);
         }
     }
 }

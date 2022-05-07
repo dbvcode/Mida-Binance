@@ -1,7 +1,9 @@
 import {
     GenericObject,
     MidaDate,
+    MidaEmitter,
     MidaOrder,
+    MidaOrderRejection,
     MidaOrderStatus,
 } from "@reiryoku/mida";
 import { Binance } from "binance-api-node";
@@ -9,7 +11,7 @@ import { BinanceSpotOrderParameters } from "#platforms/binance-spot/orders/Binan
 
 export class BinanceSpotOrder extends MidaOrder {
     readonly #binanceConnection: Binance;
-    #closeSocketConnection?: any;
+    readonly #binanceEmitter: MidaEmitter;
 
     public constructor ({
         id,
@@ -28,6 +30,7 @@ export class BinanceSpotOrder extends MidaOrder {
         rejection,
         isStopOut,
         binanceConnection,
+        binanceEmitter,
     }: BinanceSpotOrderParameters) {
         super({
             id,
@@ -48,7 +51,7 @@ export class BinanceSpotOrder extends MidaOrder {
         });
 
         this.#binanceConnection = binanceConnection;
-        this.#closeSocketConnection = undefined;
+        this.#binanceEmitter = binanceEmitter;
 
         // Listen events only if the order is not in a final state
         if (
@@ -86,29 +89,22 @@ export class BinanceSpotOrder extends MidaOrder {
             case "FILLED": {
                 status = MidaOrderStatus.EXECUTED;
 
-                this.#closeSocketConnection();
-
                 break;
             }
             case "PENDING_CANCEL":
             case "CANCELED": {
                 status = MidaOrderStatus.CANCELLED;
 
-                this.#closeSocketConnection();
-
                 break;
             }
             case "EXPIRED": {
                 status = MidaOrderStatus.EXPIRED;
 
-                this.#closeSocketConnection();
-
                 break;
             }
             case "REJECTED": {
                 status = MidaOrderStatus.REJECTED;
-
-                this.#closeSocketConnection();
+                this.rejection = MidaOrderRejection.UNKNOWN;
 
                 break;
             }
@@ -124,10 +120,20 @@ export class BinanceSpotOrder extends MidaOrder {
     }
 
     #configureListeners (): void {
-        this.#closeSocketConnection = this.#binanceConnection.ws.user((descriptor: GenericObject): void => {
-            if (descriptor.e === "executionReport" && descriptor.i.toString() === this.id) {
-                this.#onUpdate(descriptor);
+        this.#binanceEmitter.on("update", (descriptor: GenericObject): void => {
+            const eventType: string = descriptor.e;
+
+            if (eventType !== "executionReport") {
+                return;
             }
+
+            const orderId: string = descriptor.i?.toString();
+
+            if (orderId !== this.id) {
+                return;
+            }
+
+            this.#onUpdate(descriptor);
         });
     }
 }
