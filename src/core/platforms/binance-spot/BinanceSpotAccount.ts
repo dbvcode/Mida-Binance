@@ -28,7 +28,7 @@ import {
     Binance,
     CandlesOptions,
     MyTrade,
-    NewOrderSpot, ReconnectingWebSocketHandler,
+    NewOrderSpot,
     Symbol as BinanceSymbol,
 } from "binance-api-node";
 import { BinanceSpotAccountParameters } from "#platforms/binance-spot/BinanceSpotAccountParameters";
@@ -97,7 +97,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             binanceOrderDirectives.timeInForce = toBinanceSpotTimeInForce(directives.timeInForce);
         }
 
-        return this.#toMidaOrder(await this.#binanceConnection.order(<NewOrderSpot> binanceOrderDirectives));
+        return this.#toMidaOrder(await this.#binanceConnection.order(<NewOrderSpot>binanceOrderDirectives));
     }
 
     public override async getBalance (): Promise<number> {
@@ -155,11 +155,11 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     }
 
     public override async getTrades (symbol: string): Promise<MidaTrade[]> {
-        const deals: MidaTrade[] = [];
+        const trades: MidaTrade[] = [];
         const binanceDeals: MyTrade[] = await this.#binanceConnection.myTrades({ symbol, });
 
         for (const binanceDeal of binanceDeals) {
-            deals.push(new BinanceSpotTrade({
+            trades.push(new BinanceSpotTrade({
                 orderId: binanceDeal.orderId.toString(),
                 tradingAccount: this,
                 symbol,
@@ -176,7 +176,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             }));
         }
 
-        return deals;
+        return trades;
     }
 
     #toMidaOrder (binanceOrder: GenericObject): MidaOrder {
@@ -422,8 +422,8 @@ export class BinanceSpotAccount extends MidaTradingAccount {
                 description: "",
                 leverage: 0,
                 lotUnits: 1,
-                maxLots: volumeFilter ? Number(volumeFilter.maxQty) : -1,
-                minLots: volumeFilter ? Number(volumeFilter.minQty) : -1,
+                maxLots: volumeFilter?.maxQty ?? -1,
+                minLots: volumeFilter?.minQty ?? -1,
                 quoteAsset: binanceSymbol.quoteAsset,
                 symbol: binanceSymbol.symbol,
             }));

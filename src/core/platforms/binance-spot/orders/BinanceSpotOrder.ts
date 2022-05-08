@@ -1,10 +1,10 @@
 import {
-    GenericObject,
     MidaDate,
     MidaEmitter,
     MidaOrder,
     MidaOrderRejection,
     MidaOrderStatus,
+    GenericObject,
 } from "@reiryoku/mida";
 import { Binance } from "binance-api-node";
 import { BinanceSpotOrderParameters } from "#platforms/binance-spot/orders/BinanceSpotOrderParameters";
@@ -74,10 +74,12 @@ export class BinanceSpotOrder extends MidaOrder {
     }
 
     #onUpdate (descriptor: GenericObject): void {
-        const lastUpdateDate: MidaDate = new MidaDate(Number(descriptor.E));
+        const lastUpdateTimestamp: number = Number(descriptor.E);
+        const lastUpdateDate: MidaDate = new MidaDate(lastUpdateTimestamp);
+        const binanceStatus: string = descriptor.X.toUpperCase();
         let status: MidaOrderStatus = MidaOrderStatus.REQUESTED;
 
-        switch (descriptor.X.toUpperCase()) {
+        switch (binanceStatus) {
             case "NEW": {
                 if (descriptor.o.toUpperCase() !== "MARKET") {
                     status = MidaOrderStatus.PENDING;
@@ -114,9 +116,7 @@ export class BinanceSpotOrder extends MidaOrder {
             this.lastUpdateDate = lastUpdateDate;
         }
 
-        if (this.status !== status) {
-            this.onStatusChange(status);
-        }
+        this.onStatusChange(status);
     }
 
     #configureListeners (): void {

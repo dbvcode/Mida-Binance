@@ -1,10 +1,10 @@
 import { GenericObject } from "@reiryoku/mida";
 
-import Binance from "binance-api-node";
+import createBinanceConnection from "binance-api-node";
 
 module.exports = require("!/plugin.mida").default;
 
-const binance: GenericObject = Binance({
+const binance: GenericObject = createBinanceConnection({
     apiKey: "XYWvFzlJKpPQGLYdardpQ7ZViB0WeqxaKgYBUHwJNwIgaV3rxPY21yDhaRRfvwu4",
     apiSecret: "Vwxl4TkwBDkcvSQ8DrNyUIfHkxERVAjbeOT8nCl1UgfKy6O3gLOom2QJs0cqIBSt",
 });

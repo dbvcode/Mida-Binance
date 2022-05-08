@@ -20,7 +20,6 @@
         "lint": "eslint . --ext .ts,.js",
         "build": "ttsc",
         "test": "npm run build && jest --verbose",
-        "create-docs": "typedoc",
         "safe-build": "rm -rf ./build && npm run lint && npm run build && jest",
         "prepublishOnly": "npm run safe-build"
     },
@@ -45,7 +44,6 @@
         "eslint": "^8.11.0",
         "jest": "^27.5.1",
         "ttypescript": "^1.5.13",
-        "typedoc": "^0.22.13",
         "typescript": "^4.6.2",
         "typescript-transform-paths": "^3.3.1"
     },
