@@ -161,6 +161,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         for (const binanceDeal of binanceDeals) {
             trades.push(new BinanceSpotTrade({
                 orderId: binanceDeal.orderId.toString(),
+                positionId: "",
                 tradingAccount: this,
                 symbol,
                 commission: Number(binanceDeal.commission),
