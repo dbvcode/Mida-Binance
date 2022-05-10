@@ -4,6 +4,7 @@ import {
     MidaAssetStatement,
     MidaDate,
     MidaEmitter,
+    MidaEventListener,
     MidaOrder,
     MidaOrderDirection,
     MidaOrderDirectives,
@@ -25,15 +26,23 @@ import {
 import {
     AccountSnapshot,
     AssetBalance,
+    AvgPriceResult,
     Binance,
     CandlesOptions,
     MyTrade,
-    NewOrderSpot,
     Symbol as BinanceSymbol,
 } from "binance-api-node";
 import { BinanceSpotAccountParameters } from "#platforms/binance-spot/BinanceSpotAccountParameters";
 import { BinanceSpotTrade } from "#platforms/binance-spot/trades/BinanceSpotTrade";
 import { BinanceSpotOrder } from "#platforms/binance-spot/orders/BinanceSpotOrder";
+
+const DEFAULT_RESOLVER_EVENTS: string[] = [
+    "reject",
+    "pending",
+    "cancel",
+    "expire",
+    "execute",
+];
 
 export class BinanceSpotAccount extends MidaTradingAccount {
     readonly #binanceConnection: Binance;
@@ -41,6 +50,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     readonly #assets: Map<string, MidaAsset>;
     readonly #symbols: Map<string, MidaSymbol>;
     readonly #ticksListeners: Map<string, boolean>;
+    readonly #lastTicks: Map<string, MidaTick>;
 
     public constructor ({
         id,
@@ -69,6 +79,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         this.#assets = new Map();
         this.#symbols = new Map();
         this.#ticksListeners = new Map();
+        this.#lastTicks = new Map();
     }
 
     public async preload (): Promise<void> {
@@ -77,27 +88,55 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     }
 
     public override async placeOrder (directives: MidaOrderDirectives): Promise<MidaOrder> {
-        if (directives.positionId || !directives.symbol) {
-            throw new Error("Binance Spot doesn't support this order directives");
-        }
-
         const symbol: string = directives.symbol as string;
+        const direction: MidaOrderDirection = directives.direction;
         const volume: number = directives.volume;
-        const binanceOrderDirectives: GenericObject = {
+        const order: BinanceSpotOrder = new BinanceSpotOrder({
+            id: "",
+            direction,
+            limitPrice: directives.limit ?? undefined,
+            purpose: direction === MidaOrderDirection.BUY ? MidaOrderPurpose.OPEN : MidaOrderPurpose.CLOSE,
+            requestedVolume: volume,
+            status: MidaOrderStatus.REQUESTED,
             symbol,
-            side: directives.direction === MidaOrderDirection.BUY ? "BUY" : "SELL",
-            quantity: volume.toString(),
-        };
+            timeInForce: directives.timeInForce ?? MidaOrderTimeInForce.GOOD_TILL_CANCEL,
+            tradingAccount: this,
+            binanceConnection: this.#binanceConnection,
+            binanceEmitter: this.#binanceEmitter,
+            directives,
+            isStopOut: false,
+            trades: [],
+        });
 
-        if (directives.limit) {
-            binanceOrderDirectives.price = directives.limit.toString();
+        const listeners: { [eventType: string]: MidaEventListener } = directives.listeners ?? {};
+        const resolver: Promise<BinanceSpotOrder> = new Promise((resolve: (order: BinanceSpotOrder) => void) => {
+            const events: string[] = directives.resolverEvents ?? DEFAULT_RESOLVER_EVENTS;
+
+            if (events.length === 0) {
+                resolve(order);
+            }
+            else {
+                const resolverEventsUuids: Map<string, string> = new Map();
+
+                for (const eventType of events) {
+                    resolverEventsUuids.set(eventType, order.on(eventType, (): void => {
+                        for (const uuid of [ ...resolverEventsUuids.values(), ]) {
+                            order.removeEventListener(uuid);
+                        }
+
+                        resolve(order);
+                    }));
+                }
+            }
+        });
+
+        for (const eventType of Object.keys(listeners)) {
+            order.on(eventType, listeners[eventType]);
         }
 
-        if (directives.timeInForce) {
-            binanceOrderDirectives.timeInForce = toBinanceSpotTimeInForce(directives.timeInForce);
-        }
+        order.send();
 
-        return this.#toMidaOrder(await this.#binanceConnection.order(<NewOrderSpot>binanceOrderDirectives));
+        return resolver;
     }
 
     public override async getBalance (): Promise<number> {
@@ -133,10 +172,40 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     }
 
     public override async getEquity (): Promise<number> {
-        const accountSnapshot: AccountSnapshot = await this.#binanceConnection.accountSnapshot({ type: "SPOT", });
+        const balanceSheet: MidaAssetStatement[] = await this.getBalanceSheet();
+        const lastQuotations: GenericObject = await this.#binanceConnection.allBookTickers();
+        let totalPrimaryAssetBalance: number = 0;
 
-        // Return the total BTC balance if all the other assets were liquidated for it
-        return Number(accountSnapshot.snapshotVos[0].data.totalAssetOfBtc);
+        for (const assetStatement of balanceSheet) {
+            const asset: string = assetStatement.asset;
+            const totalAssetBalance: number = assetStatement.freeVolume + assetStatement.lockedVolume;
+
+            if (this.primaryAsset === asset) {
+                totalPrimaryAssetBalance += totalPrimaryAssetBalance;
+
+                continue;
+            }
+
+            let exchangeRate: GenericObject = lastQuotations[asset + this.primaryAsset];
+
+            if (exchangeRate) {
+                totalPrimaryAssetBalance += totalAssetBalance * Number(exchangeRate.bidPrice);
+
+                continue;
+            }
+
+            exchangeRate = lastQuotations[this.primaryAsset + asset];
+
+            if (!exchangeRate) {
+                console.log(`Exchange rate for ${asset} not found, asset excluded from equity calculation`);
+
+                continue;
+            }
+
+            totalPrimaryAssetBalance += totalAssetBalance / Number(exchangeRate.bidPrice);
+        }
+
+        return totalPrimaryAssetBalance;
     }
 
     public override async getUsedMargin (): Promise<number> {
@@ -171,7 +240,6 @@ export class BinanceSpotAccount extends MidaTradingAccount {
                 executionPrice: Number(binanceDeal.price),
                 id: binanceDeal.id.toString(),
                 purpose: binanceDeal.isBuyer ? MidaTradePurpose.OPEN : MidaTradePurpose.CLOSE,
-                requestDate: new MidaDate(Number(binanceDeal.time)),
                 status: MidaTradeStatus.EXECUTED,
                 volume: Number(binanceDeal.qty),
             }));
@@ -180,13 +248,13 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         return trades;
     }
 
-    #toMidaOrder (binanceOrder: GenericObject): MidaOrder {
-        const creationDate: MidaDate | undefined = binanceOrder.time ? new MidaDate(Number(binanceOrder.time)) : undefined;
-        let status: MidaOrderStatus;
+    #normalizeOrder (plainOrder: GenericObject): MidaOrder {
+        const creationDate: MidaDate | undefined = plainOrder.time ? new MidaDate(Number(plainOrder.time)) : undefined;
+        let status: MidaOrderStatus = MidaOrderStatus.REQUESTED;
 
-        switch (binanceOrder.status.toUpperCase()) {
+        switch (plainOrder.status.toUpperCase()) {
             case "NEW": {
-                if (binanceOrder.type.toUpperCase() !== "MARKET") {
+                if (plainOrder.type.toUpperCase() !== "MARKET") {
                     status = MidaOrderStatus.PENDING;
                 }
 
@@ -214,27 +282,24 @@ export class BinanceSpotAccount extends MidaTradingAccount {
 
                 break;
             }
-            default: {
-                status = MidaOrderStatus.REQUESTED;
-            }
         }
 
         return new BinanceSpotOrder({
             tradingAccount: this,
             creationDate,
             trades: [],
-            direction: binanceOrder.side === "BUY" ? MidaOrderDirection.BUY : MidaOrderDirection.SELL,
-            id: binanceOrder.orderId.toString(),
+            direction: plainOrder.side === "BUY" ? MidaOrderDirection.BUY : MidaOrderDirection.SELL,
+            id: plainOrder.orderId.toString(),
             isStopOut: false,
-            lastUpdateDate: binanceOrder.updateTime ? new MidaDate(Number(binanceOrder.updateTime)) : creationDate?.clone(),
-            limitPrice: 0,
-            purpose: binanceOrder.side === "BUY" ? MidaOrderPurpose.OPEN : MidaOrderPurpose.CLOSE,
-            requestedVolume: Number(binanceOrder.origQty),
-            status: binanceOrder.status === "FILLED" ? MidaOrderStatus.EXECUTED : MidaOrderStatus.REQUESTED,
-            symbol: binanceOrder.symbol,
+            lastUpdateDate: plainOrder.updateTime ? new MidaDate(Number(plainOrder.updateTime)) : creationDate,
+            limitPrice: plainOrder.type === "LIMIT" ? Number(plainOrder.price) : undefined,
+            purpose: plainOrder.side === "BUY" ? MidaOrderPurpose.OPEN : MidaOrderPurpose.CLOSE,
+            requestedVolume: Number(plainOrder.origQty),
+            status,
+            symbol: plainOrder.symbol,
+            timeInForce: normalizeTimeInForce(plainOrder.timeInForce),
             binanceConnection: this.#binanceConnection,
             binanceEmitter: this.#binanceEmitter,
-            timeInForce: toMidaTimeInForce(binanceOrder.timeInForce),
         });
     }
 
@@ -243,7 +308,8 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         const executedOrders: MidaOrder[] = [];
 
         for (const binanceOrder of binanceOrders) {
-            const order = this.#toMidaOrder(binanceOrder);
+            console.log(binanceOrder);
+            const order = this.#normalizeOrder(binanceOrder);
 
             if (order.isExecuted) {
                 executedOrders.push(order);
@@ -258,7 +324,8 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         const pendingOrders: MidaOrder[] = [];
 
         for (const binanceOrder of binanceOrders) {
-            const order = this.#toMidaOrder(binanceOrder);
+            console.log(binanceOrder);
+            const order = this.#normalizeOrder(binanceOrder);
 
             if (order.status === MidaOrderStatus.PENDING) {
                 pendingOrders.push(order);
@@ -327,23 +394,36 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     }
 
     public override async getSymbolBid (symbol: string): Promise<number> {
+        const lastTick: MidaTick | undefined = this.#lastTicks.get(symbol);
+
+        if (lastTick) {
+            return lastTick.bid;
+        }
+
         return (await this.#getSymbolLastTick(symbol)).bid;
     }
 
     public override async getSymbolAsk (symbol: string): Promise<number> {
+        const lastTick: MidaTick | undefined = this.#lastTicks.get(symbol);
+
+        if (lastTick) {
+            return lastTick.ask;
+        }
+
         return (await this.#getSymbolLastTick(symbol)).ask;
     }
 
     public override async getSymbolAveragePrice (symbol: string): Promise<number> {
-        // @ts-ignore
-        return Number((await this.#binanceConnection.avgPrice({ symbol, })).price);
+        const response: AvgPriceResult = await this.#binanceConnection.avgPrice({ symbol, }) as AvgPriceResult;
+
+        return Number(response.price);
     }
 
     public override async getSymbolPeriods (symbol: string, timeframe: number): Promise<MidaPeriod[]> {
         const periods: MidaPeriod[] = [];
         const binancePeriods: GenericObject[] = await this.#binanceConnection.candles(<CandlesOptions> {
             symbol,
-            interval: toBinanceSpotTimeframe(timeframe),
+            interval: normalizeTimeframeForBinance(timeframe),
         });
 
         for (const binancePeriod of binancePeriods) {
@@ -386,7 +466,6 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     }
 
     public override async isSymbolMarketOpen (symbol: string): Promise<boolean> {
-        // Binance Spot crypto markets are always open
         return true;
     }
 
@@ -403,6 +482,8 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             movement: MidaTickMovement.BID_ASK,
             symbol,
         });
+
+        this.#lastTicks.set(symbol, tick);
 
         if (this.#ticksListeners.has(symbol)) {
             this.notifyListeners("tick", { tick, });
@@ -432,8 +513,9 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     }
 
     async #configureListeners (): Promise<void> {
-        await this.#binanceConnection.ws.user((descriptor: GenericObject): void => {
-            this.#binanceEmitter.notifyListeners("update", descriptor);
+        await this.#binanceConnection.ws.user((update: GenericObject): void => {
+            console.log(update);
+            this.#binanceEmitter.notifyListeners("update", { update, });
         });
     }
 }
@@ -448,7 +530,7 @@ export function getBinanceSymbolFilterByType (binanceSymbol: BinanceSymbol, type
     return undefined;
 }
 
-export function toBinanceSpotTimeframe (timeframe: number): string {
+export function normalizeTimeframeForBinance (timeframe: number): string {
     switch (timeframe) {
         case 60: {
             return "1m";
@@ -489,7 +571,7 @@ export function toBinanceSpotTimeframe (timeframe: number): string {
     }
 }
 
-export function toBinanceSpotTimeInForce (timeInForce: MidaOrderTimeInForce): string {
+export function normalizeTimeInForceForBinance (timeInForce: MidaOrderTimeInForce): string {
     switch (timeInForce) {
         case MidaOrderTimeInForce.GOOD_TILL_CANCEL: {
             return "GTC";
@@ -506,7 +588,7 @@ export function toBinanceSpotTimeInForce (timeInForce: MidaOrderTimeInForce): st
     }
 }
 
-export function toMidaTimeInForce (timeInForce: string): MidaOrderTimeInForce {
+export function normalizeTimeInForce (timeInForce: string): MidaOrderTimeInForce {
     switch (timeInForce.toUpperCase()) {
         case "GTC": {
             return MidaOrderTimeInForce.GOOD_TILL_CANCEL;

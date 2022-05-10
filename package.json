@@ -1,11 +1,11 @@
 {
-    "name": "@reiryoku/mida-plugin-template",
+    "name": "@reiryoku/mida-binance",
     "version": "1.0.0",
-    "description": "A Mida plugin template",
+    "description": "A Mida plugin for using Binance trading accounts",
     "license": "MIT",
-    "homepage": "https://github.com/Reiryoku-Technologies/Mida-Plugin-Template",
+    "homepage": "https://github.com/Reiryoku-Technologies/Mida-Binance",
     "bugs": {
-        "url": "https://github.com/Reiryoku-Technologies/Mida-Plugin-Template/issues",
+        "url": "https://github.com/Reiryoku-Technologies/Mida-Binance/issues",
         "email": "dev@reiryoku.com"
     },
     "author": {
@@ -14,7 +14,7 @@
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/Reiryoku-Technologies/Mida-Plugin-Template.git"
+        "url": "https://github.com/Reiryoku-Technologies/Mida-Binance.git"
     },
     "scripts": {
         "lint": "eslint . --ext .ts,.js",
@@ -48,6 +48,6 @@
         "typescript-transform-paths": "^3.3.1"
     },
     "peerDependencies": {
-        "@reiryoku/mida": "^6.0.0"
+        "@reiryoku/mida": ">=7"
     }
 }

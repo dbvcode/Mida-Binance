@@ -1,3 +1,3 @@
-import { BinancePlugin } from "#BinancePlugin";
+import { BinancePlugin } from "!/src/core/BinancePlugin";
 
 export default new BinancePlugin();
