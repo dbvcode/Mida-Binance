@@ -222,15 +222,24 @@ export class BinanceSpotOrder extends MidaOrder {
         this.onStatusChange(MidaOrderStatus.REJECTED);
     }
 
+    // eslint-disable-next-line max-lines-per-function
     #onUpdate (descriptor: GenericObject): void {
-        const lastUpdateTimestamp: number = Number(descriptor.E);
-        const lastUpdateDate: MidaDate = new MidaDate(lastUpdateTimestamp);
-        const binanceStatus: string = descriptor.X.toUpperCase();
+        const orderId: string = descriptor.orderId.toString();
+        const lastUpdateDate: MidaDate = new MidaDate();
+        const plainStatus: string = descriptor.orderStatus.toUpperCase();
         let status: MidaOrderStatus = MidaOrderStatus.REQUESTED;
 
-        switch (binanceStatus) {
+        if (!this.id) {
+            this.id = orderId;
+        }
+
+        if (!this.lastUpdateDate || this.lastUpdateDate.timestamp !== lastUpdateDate.timestamp) {
+            this.lastUpdateDate = lastUpdateDate;
+        }
+
+        switch (plainStatus) {
             case "NEW": {
-                if (descriptor.o.toUpperCase() !== "MARKET") {
+                if (descriptor.orderType.toUpperCase() !== "MARKET") {
                     status = MidaOrderStatus.PENDING;
                 }
 
@@ -238,7 +247,9 @@ export class BinanceSpotOrder extends MidaOrder {
             }
             case "PARTIALLY_FILLED":
             case "FILLED": {
-                status = MidaOrderStatus.EXECUTED;
+                if (descriptor.isOrderWorking === false) {
+                    status = MidaOrderStatus.EXECUTED;
+                }
 
                 break;
             }
@@ -257,30 +268,45 @@ export class BinanceSpotOrder extends MidaOrder {
                 status = MidaOrderStatus.REJECTED;
                 this.rejection = MidaOrderRejection.UNKNOWN;
 
+                console.log("Unknonw Binance Spot order reject reason");
+                console.log(descriptor.orderRejectReason);
+
                 break;
             }
         }
 
-        if (!this.lastUpdateDate || this.lastUpdateDate.timestamp !== lastUpdateDate.timestamp) {
-            this.lastUpdateDate = lastUpdateDate;
+        if (descriptor.executionType.toUpperCase() === "TRADE") {
+            this.onTrade(new BinanceSpotTrade({
+                commission: Number(descriptor.commission),
+                commissionAsset: descriptor.commissionAsset,
+                direction: this.#directives?.direction === MidaOrderDirection.BUY ? MidaTradeDirection.BUY : MidaTradeDirection.SELL,
+                executionDate: lastUpdateDate,
+                executionPrice: Number(descriptor.priceLastTrade),
+                id: descriptor.tradeId.toString(),
+                orderId,
+                positionId: "",
+                purpose: this.#directives?.direction === MidaOrderDirection.BUY ? MidaTradePurpose.OPEN : MidaTradePurpose.CLOSE,
+                status: MidaTradeStatus.EXECUTED,
+                symbol: this.#directives?.symbol as string,
+                tradingAccount: this.tradingAccount,
+                volume: Number(descriptor.lastTradeQuantity),
+            }));
         }
 
-        this.onStatusChange(status);
+        if (this.status !== status) {
+            this.onStatusChange(status);
+        }
     }
 
     #configureListeners (): void {
         this.#binanceEmitter.on("update", (event: MidaEvent): void => {
-            console.log(event.descriptor);
-            const descriptor = event.descriptor.update;
-            const eventType: string = descriptor.e;
+            const descriptor = event.descriptor;
 
-            if (eventType !== "executionReport") {
+            if (descriptor.eventType !== "executionReport") {
                 return;
             }
 
-            const orderId: string = descriptor.i?.toString();
-
-            if (orderId !== this.id) {
+            if (!this.id || descriptor?.orderId.toString() !== this.id) {
                 return;
             }
 

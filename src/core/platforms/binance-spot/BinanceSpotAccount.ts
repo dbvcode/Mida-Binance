@@ -24,7 +24,6 @@ import {
     MidaTradingAccount,
 } from "@reiryoku/mida";
 import {
-    AccountSnapshot,
     AssetBalance,
     AvgPriceResult,
     Binance,
@@ -134,6 +133,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             order.on(eventType, listeners[eventType]);
         }
 
+        this.notifyListeners("order", { order, });
         order.send();
 
         return resolver;
@@ -308,7 +308,6 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         const executedOrders: MidaOrder[] = [];
 
         for (const binanceOrder of binanceOrders) {
-            console.log(binanceOrder);
             const order = this.#normalizeOrder(binanceOrder);
 
             if (order.isExecuted) {
@@ -324,7 +323,6 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         const pendingOrders: MidaOrder[] = [];
 
         for (const binanceOrder of binanceOrders) {
-            console.log(binanceOrder);
             const order = this.#normalizeOrder(binanceOrder);
 
             if (order.status === MidaOrderStatus.PENDING) {
@@ -512,9 +510,16 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         }
     }
 
+    #onNewOrder (descriptor: GenericObject): void {
+
+    }
+
     async #configureListeners (): Promise<void> {
         await this.#binanceConnection.ws.user((update: GenericObject): void => {
-            console.log(update);
+            if (update.eventType === "executionReport" && update.orderId && update.orderStatus.toUpperCase() === "NEW") {
+                this.#onNewOrder(update);
+            }
+
             this.#binanceEmitter.notifyListeners("update", { update, });
         });
     }
