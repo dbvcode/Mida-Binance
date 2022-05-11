@@ -1,7 +1,7 @@
 {
     "name": "@reiryoku/mida-binance",
     "version": "1.0.0",
-    "description": "A Mida plugin for using Binance trading accounts",
+    "description": "A Mida plugin for trading with Binance",
     "license": "MIT",
     "homepage": "https://github.com/Reiryoku-Technologies/Mida-Binance",
     "bugs": {

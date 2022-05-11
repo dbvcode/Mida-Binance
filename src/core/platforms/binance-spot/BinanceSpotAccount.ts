@@ -181,7 +181,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             const totalAssetBalance: number = assetStatement.freeVolume + assetStatement.lockedVolume;
 
             if (this.primaryAsset === asset) {
-                totalPrimaryAssetBalance += totalPrimaryAssetBalance;
+                totalPrimaryAssetBalance += totalAssetBalance;
 
                 continue;
             }
@@ -197,7 +197,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             exchangeRate = lastQuotations[this.primaryAsset + asset];
 
             if (!exchangeRate) {
-                console.log(`Exchange rate for ${asset} not found, asset excluded from equity calculation`);
+                console.log(`Exchange rate for ${asset} and the primary asset not found: excluded from equity calculation`);
 
                 continue;
             }

@@ -10,7 +10,7 @@ import { BinanceSpotAccount } from "#platforms/binance-spot/BinanceSpotAccount";
 
 export const PLATFORM_NAME: string = "Binance Spot";
 export const PLATFORM_SITE_URI: string = "https://www.binance.com";
-export const PLATFORM_PRIMARY_ASSET: string = "BTC";
+export const PLATFORM_PRIMARY_ASSET: string = "USDT";
 
 export class BinanceSpot extends MidaTradingPlatform {
     public constructor () {
@@ -21,7 +21,7 @@ export class BinanceSpot extends MidaTradingPlatform {
         const tradingAccount: BinanceSpotAccount = new BinanceSpotAccount({
             id: "",
             platform: this,
-            creationDate: new MidaDate(0),
+            creationDate: new MidaDate(),
             primaryAsset: PLATFORM_PRIMARY_ASSET,
             indicativeLeverage: 0,
             operativity: MidaTradingAccountOperativity.REAL,

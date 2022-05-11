@@ -270,6 +270,7 @@ export class BinanceSpotOrder extends MidaOrder {
 
     #configureListeners (): void {
         this.#binanceEmitter.on("update", (event: MidaEvent): void => {
+            console.log(event.descriptor);
             const descriptor = event.descriptor.update;
             const eventType: string = descriptor.e;
 
