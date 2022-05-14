@@ -32,7 +32,7 @@ export class BinancePlugin extends MidaPlugin {
             id: pluginId,
             name: "Mida Binance",
             version: pluginVersion,
-            description: "",
+            description: "A Mida plugin for trading with Binance",
         });
     }
 
