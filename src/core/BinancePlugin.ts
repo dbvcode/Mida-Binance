@@ -20,8 +20,8 @@
  * THE SOFTWARE.
 */
 
-import { MidaPlugin, MidaPluginActions } from "@reiryoku/mida";
-import { BinanceSpot } from "#platforms/binance-spot/BinanceSpot";
+import { MidaPlugin, MidaPluginActions, } from "@reiryoku/mida";
+import { BinanceSpot, } from "#platforms/binance-spot/BinanceSpot";
 
 export const pluginId: string = "2ae5e8d1-1101-4b9c-b6e1-e44497bb2803";
 export const pluginVersion: string = "1.0.0";

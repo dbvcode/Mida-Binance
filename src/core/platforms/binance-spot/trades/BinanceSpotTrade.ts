@@ -20,7 +20,7 @@
  * THE SOFTWARE.
 */
 
-import { MidaTrade, MidaTradeParameters } from "@reiryoku/mida";
+import { MidaTrade, MidaTradeParameters, } from "@reiryoku/mida";
 
 export class BinanceSpotTrade extends MidaTrade {
     public constructor (parameters: MidaTradeParameters) {

@@ -34,10 +34,10 @@ import {
     MidaTradePurpose,
     MidaTradeStatus,
 } from "@reiryoku/mida";
-import { Binance, NewOrderSpot } from "binance-api-node";
-import { BinanceSpotOrderParameters } from "#platforms/binance-spot/orders/BinanceSpotOrderParameters";
-import { BinanceSpotAccount, normalizeTimeInForceForBinance } from "#platforms/binance-spot/BinanceSpotAccount";
-import { BinanceSpotTrade } from "#platforms/binance-spot/trades/BinanceSpotTrade";
+import { Binance, NewOrderSpot, } from "binance-api-node";
+import { BinanceSpotOrderParameters, } from "#platforms/binance-spot/orders/BinanceSpotOrderParameters";
+import { BinanceSpotAccount, normalizeTimeInForceForBinance, } from "#platforms/binance-spot/BinanceSpotAccount";
+import { BinanceSpotTrade, } from "#platforms/binance-spot/trades/BinanceSpotTrade";
 
 export class BinanceSpotOrder extends MidaOrder {
     readonly #binanceConnection: Binance;

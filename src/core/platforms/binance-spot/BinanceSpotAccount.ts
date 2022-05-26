@@ -53,9 +53,9 @@ import {
     MyTrade,
     Symbol as BinanceSymbol,
 } from "binance-api-node";
-import { BinanceSpotAccountParameters } from "#platforms/binance-spot/BinanceSpotAccountParameters";
-import { BinanceSpotTrade } from "#platforms/binance-spot/trades/BinanceSpotTrade";
-import { BinanceSpotOrder } from "#platforms/binance-spot/orders/BinanceSpotOrder";
+import { BinanceSpotAccountParameters, } from "#platforms/binance-spot/BinanceSpotAccountParameters";
+import { BinanceSpotTrade, } from "#platforms/binance-spot/trades/BinanceSpotTrade";
+import { BinanceSpotOrder, } from "#platforms/binance-spot/orders/BinanceSpotOrder";
 
 const DEFAULT_RESOLVER_EVENTS: string[] = [
     "reject",

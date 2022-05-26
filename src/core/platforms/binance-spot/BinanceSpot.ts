@@ -27,8 +27,8 @@ import {
     MidaTradingPlatform,
 } from "@reiryoku/mida";
 import createBinanceConnection from "binance-api-node";
-import { BinanceSpotLoginParameters } from "#platforms/binance-spot/BinanceSpotLoginParameters";
-import { BinanceSpotAccount } from "#platforms/binance-spot/BinanceSpotAccount";
+import { BinanceSpotLoginParameters, } from "#platforms/binance-spot/BinanceSpotLoginParameters";
+import { BinanceSpotAccount, } from "#platforms/binance-spot/BinanceSpotAccount";
 
 export const PLATFORM_NAME: string = "Binance Spot";
 export const PLATFORM_SITE_URI: string = "https://www.binance.com";
