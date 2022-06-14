@@ -441,24 +441,27 @@ export class BinanceSpotAccount extends MidaTradingAccount {
 
     public override async getSymbolPeriods (symbol: string, timeframe: number): Promise<MidaPeriod[]> {
         const periods: MidaPeriod[] = [];
-        const binancePeriods: GenericObject[] = await this.#binanceConnection.candles(<CandlesOptions> {
+        const plainPeriods: GenericObject[] = await this.#binanceConnection.candles(<CandlesOptions> {
             symbol,
             interval: normalizeTimeframeForBinance(timeframe),
         });
 
-        for (const binancePeriod of binancePeriods) {
+        for (const plainPeriod of plainPeriods) {
             periods.push(new MidaPeriod({
                 symbol,
-                close: Number(binancePeriod.close),
-                high: Number(binancePeriod.high),
-                low: Number(binancePeriod.low),
-                open: Number(binancePeriod.open),
+                close: Number(plainPeriod.close),
+                high: Number(plainPeriod.high),
+                low: Number(plainPeriod.low),
+                open: Number(plainPeriod.open),
                 quotationPrice: MidaQuotationPrice.BID,
-                startDate: new MidaDate(Number(binancePeriod.openTime)),
+                startDate: new MidaDate(Number(plainPeriod.openTime)),
                 timeframe,
-                volume: Number(binancePeriod.volume),
+                volume: Number(plainPeriod.volume),
             }));
         }
+
+        // Order from oldest to newest
+        periods.sort((left, right): number => left.startDate.timestamp - right.startDate.timestamp);
 
         return periods;
     }
