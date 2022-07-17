@@ -21,8 +21,9 @@
 */
 
 import {
+    decimal,
     GenericObject,
-    MidaDate,
+    MidaDate, MidaDecimal,
     MidaEmitter,
     MidaEvent,
     MidaOrder,
@@ -136,7 +137,7 @@ export class BinanceSpotOrder extends MidaOrder {
 
         const symbol: string = directives.symbol;
         const direction: MidaOrderDirection = directives.direction;
-        const volume: number = directives.volume;
+        const volume: MidaDecimal = decimal(directives.volume);
 
         const plainDirectives: GenericObject = {
             symbol,
@@ -194,11 +195,11 @@ export class BinanceSpotOrder extends MidaOrder {
 
         for (const plainTrade of plainOrder?.fills ?? []) {
             this.onTrade(new BinanceSpotTrade({
-                commission: Number(plainTrade.commission),
+                commission: decimal(plainTrade.commission),
                 commissionAsset: plainTrade.commissionAsset,
                 direction: this.#directives?.direction === MidaOrderDirection.BUY ? MidaTradeDirection.BUY : MidaTradeDirection.SELL,
                 executionDate: lastUpdateDate,
-                executionPrice: Number(plainTrade.price),
+                executionPrice: decimal(plainTrade.price),
                 id: plainTrade.tradeId.toString(),
                 orderId,
                 positionId: "",
@@ -206,7 +207,7 @@ export class BinanceSpotOrder extends MidaOrder {
                 status: MidaTradeStatus.EXECUTED,
                 symbol: this.#directives?.symbol as string,
                 tradingAccount: this.tradingAccount,
-                volume: Number(plainTrade.qty),
+                volume: decimal(plainTrade.qty),
             }));
         }
 
@@ -299,11 +300,11 @@ export class BinanceSpotOrder extends MidaOrder {
 
         if (descriptor.executionType.toUpperCase() === "TRADE") {
             this.onTrade(new BinanceSpotTrade({
-                commission: Number(descriptor.commission),
+                commission: decimal(descriptor.commission),
                 commissionAsset: descriptor.commissionAsset,
                 direction: this.#directives?.direction === MidaOrderDirection.BUY ? MidaTradeDirection.BUY : MidaTradeDirection.SELL,
                 executionDate: lastUpdateDate,
-                executionPrice: Number(descriptor.priceLastTrade),
+                executionPrice: decimal(descriptor.priceLastTrade),
                 id: descriptor.tradeId.toString(),
                 orderId,
                 positionId: "",
@@ -311,7 +312,7 @@ export class BinanceSpotOrder extends MidaOrder {
                 status: MidaTradeStatus.EXECUTED,
                 symbol: this.#directives?.symbol as string,
                 tradingAccount: this.tradingAccount,
-                volume: Number(descriptor.lastTradeQuantity),
+                volume: decimal(descriptor.lastTradeQuantity),
             }));
         }
 
