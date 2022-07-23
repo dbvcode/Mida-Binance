@@ -24,7 +24,7 @@ import { MidaPlugin, MidaPluginActions, } from "@reiryoku/mida";
 import { BinanceSpot, } from "#platforms/binance-spot/BinanceSpot";
 
 export const pluginId: string = "2ae5e8d1-1101-4b9c-b6e1-e44497bb2803";
-export const pluginVersion: string = "1.0.0";
+export const pluginVersion: string = "2.0.0";
 
 export class BinancePlugin extends MidaPlugin {
     public constructor () {
@@ -32,7 +32,7 @@ export class BinancePlugin extends MidaPlugin {
             id: pluginId,
             name: "Mida Binance",
             version: pluginVersion,
-            description: "A Mida plugin for trading with Binance",
+            description: "A Mida plugin for trading with Binance accounts",
         });
     }
 

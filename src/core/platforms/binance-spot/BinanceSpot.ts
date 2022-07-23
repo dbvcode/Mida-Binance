@@ -21,9 +21,10 @@
 */
 
 import {
+    date,
+    decimal,
     MidaTradingAccountOperativity,
     MidaTradingAccountPositionAccounting,
-    MidaDate,
     MidaTradingPlatform,
 } from "@reiryoku/mida";
 import createBinanceConnection from "binance-api-node";
@@ -43,9 +44,9 @@ export class BinanceSpot extends MidaTradingPlatform {
         const tradingAccount: BinanceSpotAccount = new BinanceSpotAccount({
             id: "",
             platform: this,
-            creationDate: new MidaDate(),
+            creationDate: date(0),
             primaryAsset: PLATFORM_PRIMARY_ASSET,
-            indicativeLeverage: 0,
+            indicativeLeverage: decimal(0),
             operativity: MidaTradingAccountOperativity.REAL,
             ownerName: "",
             positionAccounting: MidaTradingAccountPositionAccounting.NETTED,

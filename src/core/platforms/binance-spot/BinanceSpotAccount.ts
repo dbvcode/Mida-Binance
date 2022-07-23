@@ -21,10 +21,14 @@
 */
 
 import {
+    date,
+    decimal,
+    warn,
     GenericObject,
     MidaAsset,
     MidaAssetStatement,
     MidaDate,
+    MidaDecimal,
     MidaEmitter,
     MidaEventListener,
     MidaOrder,
@@ -37,6 +41,7 @@ import {
     MidaPosition,
     MidaQuotationPrice,
     MidaSymbol,
+    MidaSymbolTradeStatus,
     MidaTick,
     MidaTickMovement,
     MidaTrade,
@@ -70,7 +75,8 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     readonly #binanceEmitter: MidaEmitter;
     readonly #assets: Map<string, MidaAsset>;
     readonly #symbols: Map<string, MidaSymbol>;
-    readonly #ticksListeners: Map<string, boolean>;
+    readonly #tickListeners: Map<string, boolean>;
+    readonly #periodListeners: Map<string, number[]>;
     readonly #lastTicks: Map<string, MidaTick>;
 
     public constructor ({
@@ -99,7 +105,8 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         this.#binanceEmitter = new MidaEmitter();
         this.#assets = new Map();
         this.#symbols = new Map();
-        this.#ticksListeners = new Map();
+        this.#tickListeners = new Map();
+        this.#periodListeners = new Map();
         this.#lastTicks = new Map();
     }
 
@@ -111,13 +118,13 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     public override async placeOrder (directives: MidaOrderDirectives): Promise<MidaOrder> {
         const symbol: string = directives.symbol as string;
         const direction: MidaOrderDirection = directives.direction;
-        const volume: number = directives.volume;
+        const requestedVolume: MidaDecimal = decimal(directives.volume);
         const order: BinanceSpotOrder = new BinanceSpotOrder({
             id: "",
             direction,
-            limitPrice: directives.limit ?? undefined,
+            limitPrice: directives.limit !== undefined ? decimal(directives.limit) : undefined,
             purpose: direction === MidaOrderDirection.BUY ? MidaOrderPurpose.OPEN : MidaOrderPurpose.CLOSE,
-            requestedVolume: volume,
+            requestedVolume,
             status: MidaOrderStatus.REQUESTED,
             symbol,
             timeInForce: directives.timeInForce ?? MidaOrderTimeInForce.GOOD_TILL_CANCEL,
@@ -161,10 +168,10 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         return resolver;
     }
 
-    public override async getBalance (): Promise<number> {
+    public override async getBalance (): Promise<MidaDecimal> {
         const assetStatement: MidaAssetStatement = await this.#getAssetStatement(this.primaryAsset);
 
-        return assetStatement.freeVolume + assetStatement.lockedVolume + assetStatement.borrowedVolume;
+        return decimal(assetStatement.freeVolume).add(assetStatement.lockedVolume).add(assetStatement.borrowedVolume);
     }
 
     public override async getAssetBalance (asset: string): Promise<MidaAssetStatement> {
@@ -176,16 +183,16 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         const binanceAssets: AssetBalance[] = (await this.#binanceConnection.accountInfo()).balances;
 
         for (const binanceAsset of binanceAssets) {
-            const totalVolume: number = Number(binanceAsset.free) + Number(binanceAsset.locked);
+            const totalVolume: MidaDecimal = decimal(binanceAsset.free).add(binanceAsset.locked);
 
-            if (totalVolume > 0) {
+            if (totalVolume.greaterThan(0)) {
                 balanceSheet.push({
                     tradingAccount: this,
-                    date: new MidaDate(),
+                    date: date(),
                     asset: binanceAsset.asset,
-                    freeVolume: Number(binanceAsset.free),
-                    lockedVolume: Number(binanceAsset.locked),
-                    borrowedVolume: 0,
+                    freeVolume: decimal(binanceAsset.free),
+                    lockedVolume: decimal(binanceAsset.locked),
+                    borrowedVolume: decimal(0),
                 });
             }
         }
@@ -193,17 +200,17 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         return balanceSheet;
     }
 
-    public override async getEquity (): Promise<number> {
+    public override async getEquity (): Promise<MidaDecimal> {
         const balanceSheet: MidaAssetStatement[] = await this.getBalanceSheet();
         const lastQuotations: GenericObject = await this.#binanceConnection.allBookTickers();
-        let totalPrimaryAssetBalance: number = 0;
+        let totalPrimaryAssetBalance: MidaDecimal = decimal(0);
 
         for (const assetStatement of balanceSheet) {
             const asset: string = assetStatement.asset;
-            const totalAssetBalance: number = assetStatement.freeVolume + assetStatement.lockedVolume;
+            const totalAssetBalance: MidaDecimal = assetStatement.freeVolume.add(assetStatement.lockedVolume);
 
             if (this.primaryAsset === asset) {
-                totalPrimaryAssetBalance += totalAssetBalance;
+                totalPrimaryAssetBalance = totalPrimaryAssetBalance.add(totalAssetBalance);
 
                 continue;
             }
@@ -211,7 +218,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             let exchangeRate: GenericObject = lastQuotations[asset + this.primaryAsset];
 
             if (exchangeRate) {
-                totalPrimaryAssetBalance += totalAssetBalance * Number(exchangeRate.bidPrice);
+                totalPrimaryAssetBalance = totalPrimaryAssetBalance.add(totalAssetBalance.multiply(exchangeRate.bidPrice));
 
                 continue;
             }
@@ -219,30 +226,30 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             exchangeRate = lastQuotations[this.primaryAsset + asset];
 
             if (!exchangeRate) {
-                console.log(`Exchange rate for ${asset} and the primary asset not found: excluded from equity calculation`);
+                warn(`Exchange rate for ${asset}/${this.primaryAsset} not found: excluded from equity calculation`);
 
                 continue;
             }
 
-            totalPrimaryAssetBalance += totalAssetBalance / Number(exchangeRate.bidPrice);
+            totalPrimaryAssetBalance = totalPrimaryAssetBalance.add(totalAssetBalance.divide(exchangeRate.bidPrice));
         }
 
         return totalPrimaryAssetBalance;
     }
 
-    public override async getUsedMargin (): Promise<number> {
+    public override async getUsedMargin (): Promise<MidaDecimal> {
         // Binance Spot doesn't support margin trading
-        return 0;
+        return decimal(0);
     }
 
-    public override async getFreeMargin (): Promise<number> {
+    public override async getFreeMargin (): Promise<MidaDecimal> {
         // Binance Spot doesn't support margin trading
-        return 0;
+        return decimal(0);
     }
 
-    public override async getMarginLevel (): Promise<number> {
+    public override async getMarginLevel (): Promise<MidaDecimal | undefined> {
         // Binance Spot doesn't support margin trading
-        return NaN;
+        return undefined;
     }
 
     public override async getTrades (symbol: string): Promise<MidaTrade[]> {
@@ -255,15 +262,15 @@ export class BinanceSpotAccount extends MidaTradingAccount {
                 positionId: "",
                 tradingAccount: this,
                 symbol,
-                commission: Number(binanceDeal.commission),
+                commission: decimal(binanceDeal.commission),
                 commissionAsset: binanceDeal.commissionAsset.toString(),
                 direction: binanceDeal.isBuyer ? MidaTradeDirection.BUY : MidaTradeDirection.SELL,
-                executionDate: new MidaDate(Number(binanceDeal.time)),
-                executionPrice: Number(binanceDeal.price),
+                executionDate: date(binanceDeal.time),
+                executionPrice: decimal(binanceDeal.price),
                 id: binanceDeal.id.toString(),
                 purpose: binanceDeal.isBuyer ? MidaTradePurpose.OPEN : MidaTradePurpose.CLOSE,
                 status: MidaTradeStatus.EXECUTED,
-                volume: Number(binanceDeal.qty),
+                volume: decimal(binanceDeal.qty),
             }));
         }
 
@@ -271,7 +278,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     }
 
     #normalizeOrder (plainOrder: GenericObject): MidaOrder {
-        const creationDate: MidaDate | undefined = plainOrder.time ? new MidaDate(Number(plainOrder.time)) : undefined;
+        const creationDate: MidaDate | undefined = plainOrder.time ? new MidaDate(plainOrder.time) : undefined;
         let status: MidaOrderStatus = MidaOrderStatus.REQUESTED;
 
         switch (plainOrder.status.toUpperCase()) {
@@ -314,9 +321,9 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             id: plainOrder.orderId.toString(),
             isStopOut: false,
             lastUpdateDate: plainOrder.updateTime ? new MidaDate(Number(plainOrder.updateTime)) : creationDate,
-            limitPrice: plainOrder.type === "LIMIT" ? Number(plainOrder.price) : undefined,
+            limitPrice: plainOrder.type === "LIMIT" ? decimal(plainOrder.price) : undefined,
             purpose: plainOrder.side === "BUY" ? MidaOrderPurpose.OPEN : MidaOrderPurpose.CLOSE,
-            requestedVolume: Number(plainOrder.origQty),
+            requestedVolume: decimal(plainOrder.origQty),
             status,
             symbol: plainOrder.symbol,
             timeInForce: normalizeTimeInForce(plainOrder.timeInForce),
@@ -382,17 +389,17 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         const binanceAccountAssets: AssetBalance[] = (await this.#binanceConnection.accountInfo()).balances;
         const statement: MidaAssetStatement = {
             tradingAccount: this,
-            date: new MidaDate(),
+            date: date(),
             asset,
-            freeVolume: 0,
-            lockedVolume: 0,
-            borrowedVolume: 0,
+            freeVolume: decimal(0),
+            lockedVolume: decimal(0),
+            borrowedVolume: decimal(0),
         };
 
         for (const binanceAsset of binanceAccountAssets) {
             if (binanceAsset.asset === asset) {
-                statement.freeVolume = Number(binanceAsset.free);
-                statement.lockedVolume = Number(binanceAsset.locked);
+                statement.freeVolume = decimal(binanceAsset.free);
+                statement.lockedVolume = decimal(binanceAsset.locked);
 
                 break;
             }
@@ -405,15 +412,15 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         const lastPlainTick: GenericObject = (await this.#binanceConnection.allBookTickers())[symbol];
 
         return new MidaTick({
-            ask: Number(lastPlainTick.askPrice),
-            bid: Number(lastPlainTick.bidPrice),
-            date: new MidaDate(),
+            ask: decimal(lastPlainTick.askPrice),
+            bid: decimal(lastPlainTick.bidPrice),
+            date: date(),
             movement: MidaTickMovement.BID_ASK,
             symbol,
         });
     }
 
-    public override async getSymbolBid (symbol: string): Promise<number> {
+    public override async getSymbolBid (symbol: string): Promise<MidaDecimal> {
         const lastTick: MidaTick | undefined = this.#lastTicks.get(symbol);
 
         if (lastTick) {
@@ -423,7 +430,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         return (await this.#getSymbolLastTick(symbol)).bid;
     }
 
-    public override async getSymbolAsk (symbol: string): Promise<number> {
+    public override async getSymbolAsk (symbol: string): Promise<MidaDecimal> {
         const lastTick: MidaTick | undefined = this.#lastTicks.get(symbol);
 
         if (lastTick) {
@@ -433,32 +440,36 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         return (await this.#getSymbolLastTick(symbol)).ask;
     }
 
-    public override async getSymbolAveragePrice (symbol: string): Promise<number> {
+    public override async getSymbolAverage (symbol: string): Promise<MidaDecimal> {
         const response: AvgPriceResult = await this.#binanceConnection.avgPrice({ symbol, }) as AvgPriceResult;
 
-        return Number(response.price);
+        return decimal(response.price);
     }
 
     public override async getSymbolPeriods (symbol: string, timeframe: number): Promise<MidaPeriod[]> {
         const periods: MidaPeriod[] = [];
-        const binancePeriods: GenericObject[] = await this.#binanceConnection.candles(<CandlesOptions> {
+        const plainPeriods: GenericObject[] = await this.#binanceConnection.candles(<CandlesOptions> {
             symbol,
             interval: normalizeTimeframeForBinance(timeframe),
         });
 
-        for (const binancePeriod of binancePeriods) {
+        for (const plainPeriod of plainPeriods) {
             periods.push(new MidaPeriod({
                 symbol,
-                close: Number(binancePeriod.close),
-                high: Number(binancePeriod.high),
-                low: Number(binancePeriod.low),
-                open: Number(binancePeriod.open),
+                close: decimal(plainPeriod.close),
+                high: decimal(plainPeriod.high),
+                low: decimal(plainPeriod.low),
+                open: decimal(plainPeriod.open),
                 quotationPrice: MidaQuotationPrice.BID,
-                startDate: new MidaDate(Number(binancePeriod.openTime)),
+                startDate: date(plainPeriod.openTime),
                 timeframe,
-                volume: Number(binancePeriod.volume),
+                isClosed: true,
+                volume: decimal(plainPeriod.volume),
             }));
         }
+
+        // Order from oldest to newest
+        periods.sort((left, right): number => left.startDate.timestamp - right.startDate.timestamp);
 
         return periods;
     }
@@ -472,13 +483,25 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     }
 
     public override async watchSymbolTicks (symbol: string): Promise<void> {
-        if (this.#ticksListeners.has(symbol)) {
+        if (this.#tickListeners.has(symbol)) {
             return;
         }
 
         this.#binanceConnection.ws.ticker(symbol, (plainTick: GenericObject) => this.#onTick(plainTick));
 
-        this.#ticksListeners.set(symbol, true);
+        this.#tickListeners.set(symbol, true);
+    }
+
+    public override async watchSymbolPeriods (symbol: string, timeframe: number): Promise<void> {
+        const listenedTimeframes: number[] = this.#periodListeners.get(symbol) ?? [];
+
+        if (!listenedTimeframes.includes(timeframe)) {
+            this.#binanceConnection.ws.candles(symbol,
+                normalizeTimeframeForBinance(timeframe),
+                (plainPeriod: GenericObject) => this.#onPeriodUpdate(plainPeriod));
+            listenedTimeframes.push(timeframe);
+            this.#periodListeners.set(symbol, listenedTimeframes);
+        }
     }
 
     public override async getOpenPositions (): Promise<MidaPosition[]> {
@@ -493,21 +516,45 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         return (await this.#binanceConnection.depositAddress({ coin: asset, network: net, })).address;
     }
 
-    async #onTick (plainTick: GenericObject): Promise<void> {
+    #onTick (plainTick: GenericObject): void {
         const symbol: string = plainTick.symbol;
         const tick: MidaTick = new MidaTick({
-            ask: Number(plainTick.bestAsk),
-            bid: Number(plainTick.bestBid),
-            date: new MidaDate(),
+            ask: decimal(plainTick.bestAsk),
+            bid: decimal(plainTick.bestBid),
+            date: date(),
             movement: MidaTickMovement.BID_ASK,
             symbol,
         });
 
         this.#lastTicks.set(symbol, tick);
 
-        if (this.#ticksListeners.has(symbol)) {
+        if (this.#tickListeners.has(symbol)) {
             this.notifyListeners("tick", { tick, });
         }
+    }
+
+    #onPeriodUpdate (plainPeriod: GenericObject): void {
+        const symbol: string = plainPeriod.symbol;
+        const timeframe: number = normalizeTimeframe(plainPeriod.interval);
+
+        if (!(this.#periodListeners.get(symbol) ?? []).includes(timeframe)) {
+            return;
+        }
+
+        const period: MidaPeriod = new MidaPeriod({
+            symbol,
+            close: decimal(plainPeriod.close),
+            high: decimal(plainPeriod.high),
+            low: decimal(plainPeriod.low),
+            open: decimal(plainPeriod.open),
+            quotationPrice: MidaQuotationPrice.BID,
+            startDate: date(plainPeriod.openTime),
+            timeframe,
+            isClosed: false,
+            volume: decimal(plainPeriod.volume),
+        });
+
+        this.notifyListeners("period-update", { period, });
     }
 
     async #preloadSymbols (): Promise<void> {
@@ -522,10 +569,11 @@ export class BinanceSpotAccount extends MidaTradingAccount {
                 baseAsset: binanceSymbol.baseAsset,
                 tradingAccount: this,
                 description: "",
-                leverage: 0,
-                lotUnits: 1,
-                maxLots: volumeFilter?.maxQty ?? -1,
-                minLots: volumeFilter?.minQty ?? -1,
+                leverage: decimal(0),
+                lotUnits: decimal(1),
+                maxLots: decimal(volumeFilter?.maxQty ?? -1),
+                minLots: decimal(volumeFilter?.minQty ?? -1),
+                pipPosition: -1,
                 quoteAsset: binanceSymbol.quoteAsset,
                 symbol: binanceSymbol.symbol,
             }));
@@ -534,6 +582,14 @@ export class BinanceSpotAccount extends MidaTradingAccount {
 
     #onNewOrder (descriptor: GenericObject): void {
 
+    }
+
+    public override async getSymbolTradeStatus (symbol: string): Promise<MidaSymbolTradeStatus> {
+        return MidaSymbolTradeStatus.ENABLED;
+    }
+
+    public override async getDate (): Promise<MidaDate> {
+        return date();
     }
 
     async #configureListeners (): Promise<void> {
@@ -577,7 +633,7 @@ export function normalizeTimeframeForBinance (timeframe: number): string {
         case 3600: {
             return "1h";
         }
-        case 14400: {
+        case 7200: {
             return "2h";
         }
         case 43200: {
@@ -594,6 +650,47 @@ export function normalizeTimeframeForBinance (timeframe: number): string {
         }
         default: {
             throw new Error("Binance Spot doesn't support this timeframe");
+        }
+    }
+}
+
+export function normalizeTimeframe (timeframe: string): number {
+    switch (timeframe) {
+        case "1m": {
+            return 60;
+        }
+        case "3m": {
+            return 180;
+        }
+        case "5m": {
+            return 300;
+        }
+        case "15m": {
+            return 900;
+        }
+        case "30m": {
+            return 1800;
+        }
+        case "1h": {
+            return 3600;
+        }
+        case "2h": {
+            return 7200;
+        }
+        case "12h": {
+            return 43200;
+        }
+        case "1d": {
+            return 86400;
+        }
+        case "1w": {
+            return 604800;
+        }
+        case "1M": {
+            return 2592000;
+        }
+        default: {
+            throw new Error("Unknown timeframe");
         }
     }
 }
