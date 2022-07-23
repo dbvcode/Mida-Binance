@@ -23,6 +23,7 @@
 import {
     date,
     decimal,
+    warn,
     GenericObject,
     MidaAsset,
     MidaAssetStatement,
@@ -225,7 +226,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             exchangeRate = lastQuotations[this.primaryAsset + asset];
 
             if (!exchangeRate) {
-                console.log(`Exchange rate for ${asset} and the primary asset not found: excluded from equity calculation`);
+                warn(`Exchange rate for ${asset}/${this.primaryAsset} not found: excluded from equity calculation`);
 
                 continue;
             }
