@@ -226,7 +226,8 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             exchangeRate = lastQuotations[this.primaryAsset + asset];
 
             if (!exchangeRate) {
-                warn(`Exchange rate for ${asset}/${this.primaryAsset} not found: excluded from equity calculation`);
+                warn(`You own ${totalAssetBalance.toString()} ${asset}`);
+                warn(`Exchange rate for ${asset}/${this.primaryAsset} not available: excluded from equity calculation`);
 
                 continue;
             }
@@ -363,30 +364,28 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     }
 
     public async getAssets (): Promise<string[]> {
-        const assets: string[] = [];
-        const binanceAssets: AssetBalance[] = (await this.#binanceConnection.accountInfo()).balances;
+        const assets: Set<string> = new Set();
 
-        for (const binanceAsset of binanceAssets) {
-            assets.push(binanceAsset.asset);
+        for (const symbol of [ ...this.#symbols.values(), ]) {
+            assets.add(symbol.baseAsset);
+            assets.add(symbol.quoteAsset);
         }
 
-        return assets;
+        return [ ...assets, ];
     }
 
     public override async getAsset (asset: string): Promise<MidaAsset | undefined> {
-        const binanceAssets: AssetBalance[] = (await this.#binanceConnection.accountInfo()).balances;
+        const assets: string[] = await this.getAssets();
 
-        for (const binanceAsset of binanceAssets) {
-            if (binanceAsset.asset === asset) {
-                return new MidaAsset({ asset, tradingAccount: this, });
-            }
+        if (assets.includes(asset)) {
+            return new MidaAsset({ asset, tradingAccount: this, });
         }
 
         return undefined;
     }
 
     async #getAssetStatement (asset: string): Promise<MidaAssetStatement> {
-        const binanceAccountAssets: AssetBalance[] = (await this.#binanceConnection.accountInfo()).balances;
+        const balanceSheet: AssetBalance[] = (await this.#binanceConnection.accountInfo()).balances;
         const statement: MidaAssetStatement = {
             tradingAccount: this,
             date: date(),
@@ -396,7 +395,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             borrowedVolume: decimal(0),
         };
 
-        for (const binanceAsset of binanceAccountAssets) {
+        for (const binanceAsset of balanceSheet) {
             if (binanceAsset.asset === asset) {
                 statement.freeVolume = decimal(binanceAsset.free);
                 statement.lockedVolume = decimal(binanceAsset.locked);
@@ -409,6 +408,12 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     }
 
     async #getSymbolLastTick (symbol: string): Promise<MidaTick> {
+        const lastTick: MidaTick | undefined = this.#lastTicks.get(symbol);
+
+        if (lastTick) {
+            return lastTick;
+        }
+
         const lastPlainTick: GenericObject = (await this.#binanceConnection.allBookTickers())[symbol];
 
         return new MidaTick({
@@ -421,22 +426,10 @@ export class BinanceSpotAccount extends MidaTradingAccount {
     }
 
     public override async getSymbolBid (symbol: string): Promise<MidaDecimal> {
-        const lastTick: MidaTick | undefined = this.#lastTicks.get(symbol);
-
-        if (lastTick) {
-            return lastTick.bid;
-        }
-
         return (await this.#getSymbolLastTick(symbol)).bid;
     }
 
     public override async getSymbolAsk (symbol: string): Promise<MidaDecimal> {
-        const lastTick: MidaTick | undefined = this.#lastTicks.get(symbol);
-
-        if (lastTick) {
-            return lastTick.ask;
-        }
-
         return (await this.#getSymbolLastTick(symbol)).ask;
     }
 
@@ -487,21 +480,21 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             return;
         }
 
-        this.#binanceConnection.ws.ticker(symbol, (plainTick: GenericObject) => this.#onTick(plainTick));
-
+        this.#binanceConnection.ws.customSubStream(`${symbol}@bookTicker`, (plainTick: GenericObject) => this.#onTick(plainTick));
         this.#tickListeners.set(symbol, true);
     }
 
     public override async watchSymbolPeriods (symbol: string, timeframe: number): Promise<void> {
         const listenedTimeframes: number[] = this.#periodListeners.get(symbol) ?? [];
 
-        if (!listenedTimeframes.includes(timeframe)) {
-            this.#binanceConnection.ws.candles(symbol,
-                normalizeTimeframeForBinance(timeframe),
-                (plainPeriod: GenericObject) => this.#onPeriodUpdate(plainPeriod));
-            listenedTimeframes.push(timeframe);
-            this.#periodListeners.set(symbol, listenedTimeframes);
+        if (listenedTimeframes.includes(timeframe)) {
+            return;
         }
+
+        // eslint-disable-next-line max-len
+        this.#binanceConnection.ws.candles(symbol, normalizeTimeframeForBinance(timeframe), (plainPeriod: GenericObject) => this.#onPeriodUpdate(plainPeriod));
+        listenedTimeframes.push(timeframe);
+        this.#periodListeners.set(symbol, listenedTimeframes);
     }
 
     public override async getOpenPositions (): Promise<MidaPosition[]> {
@@ -516,11 +509,12 @@ export class BinanceSpotAccount extends MidaTradingAccount {
         return (await this.#binanceConnection.depositAddress({ coin: asset, network: net, })).address;
     }
 
+    // https://github.com/binance/binance-spot-api-docs/blob/master/web-socket-streams.md#individual-symbol-book-ticker-streams
     #onTick (plainTick: GenericObject): void {
         const symbol: string = plainTick.symbol;
         const tick: MidaTick = new MidaTick({
-            ask: decimal(plainTick.bestAsk),
-            bid: decimal(plainTick.bestBid),
+            bid: decimal(plainTick.b),
+            ask: decimal(plainTick.a),
             date: date(),
             movement: MidaTickMovement.BID_ASK,
             symbol,
@@ -550,7 +544,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             quotationPrice: MidaQuotationPrice.BID,
             startDate: date(plainPeriod.openTime),
             timeframe,
-            isClosed: false,
+            isClosed: plainPeriod.isFinal === true,
             volume: decimal(plainPeriod.volume),
         });
 
