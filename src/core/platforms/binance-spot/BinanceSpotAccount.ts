@@ -23,7 +23,6 @@
 import {
     date,
     decimal,
-    warn,
     GenericObject,
     MidaAsset,
     MidaAssetStatement,
@@ -49,18 +48,12 @@ import {
     MidaTradePurpose,
     MidaTradeStatus,
     MidaTradingAccount,
+    warn,
 } from "@reiryoku/mida";
-import {
-    AssetBalance,
-    AvgPriceResult,
-    Binance,
-    CandlesOptions,
-    MyTrade,
-    Symbol as BinanceSymbol,
-} from "binance-api-node";
-import { BinanceSpotAccountParameters, } from "#platforms/binance-spot/BinanceSpotAccountParameters";
-import { BinanceSpotTrade, } from "#platforms/binance-spot/trades/BinanceSpotTrade";
-import { BinanceSpotOrder, } from "#platforms/binance-spot/orders/BinanceSpotOrder";
+import {AssetBalance, AvgPriceResult, Binance, CandlesOptions, MyTrade, Symbol as BinanceSymbol,} from "binance-api-node";
+import {BinanceSpotAccountParameters,} from "#platforms/binance-spot/BinanceSpotAccountParameters";
+import {BinanceSpotTrade,} from "#platforms/binance-spot/trades/BinanceSpotTrade";
+import {BinanceSpotOrder,} from "#platforms/binance-spot/orders/BinanceSpotOrder";
 
 const DEFAULT_RESOLVER_EVENTS: string[] = [
     "reject",
@@ -480,7 +473,7 @@ export class BinanceSpotAccount extends MidaTradingAccount {
             return;
         }
 
-        this.#binanceConnection.ws.customSubStream(`${symbol}@bookTicker`, (plainTick: GenericObject) => this.#onTick(plainTick));
+        this.#binanceConnection.ws.customSubStream(`${symbol.toLowerCase()}@bookTicker`, (plainTick: GenericObject) => this.#onTick(plainTick));
         this.#tickListeners.set(symbol, true);
     }
 
@@ -511,12 +504,38 @@ export class BinanceSpotAccount extends MidaTradingAccount {
 
     // https://github.com/binance/binance-spot-api-docs/blob/master/web-socket-streams.md#individual-symbol-book-ticker-streams
     #onTick (plainTick: GenericObject): void {
-        const symbol: string = plainTick.symbol;
+        const symbol: string = plainTick.s;
+        const bid: MidaDecimal = decimal(plainTick.b);
+        const ask: MidaDecimal = decimal(plainTick.a);
+        const previousTick: MidaTick | undefined = this.#lastTicks.get(symbol);
+        const movement: MidaTickMovement | undefined = ((): MidaTickMovement | undefined => {
+            const currentBidIsEqualToPrevious: boolean = previousTick?.bid.equals(bid) ?? false;
+            const currentAskIsEqualToPrevious: boolean = previousTick?.ask.equals(ask) ?? false;
+
+            if (currentBidIsEqualToPrevious && currentAskIsEqualToPrevious) {
+                return undefined;
+            }
+
+            if (currentAskIsEqualToPrevious) {
+                return MidaTickMovement.BID;
+            }
+
+            if (currentBidIsEqualToPrevious) {
+                return MidaTickMovement.ASK;
+            }
+
+            return MidaTickMovement.BID_ASK;
+        })();
+
+        if (!movement) {
+            return;
+        }
+
         const tick: MidaTick = new MidaTick({
             bid: decimal(plainTick.b),
             ask: decimal(plainTick.a),
             date: date(),
-            movement: MidaTickMovement.BID_ASK,
+            movement,
             symbol,
         });
 
