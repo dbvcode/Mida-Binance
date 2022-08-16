@@ -1,3 +1,5 @@
+2.1.0 - 16-08-2022
+===================
 ### Features
 * Use real-time sub stream for tick listeners, add support for the `period-update` event [#3](https://github.com/Reiryoku-Technologies/Mida-Binance/pull/3)
 
