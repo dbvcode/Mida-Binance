@@ -668,6 +668,9 @@ export function normalizeTimeframeForBinance (timeframe: number): string {
         case 86400: {
             return "1d";
         }
+        case 259200: {
+          return "3d";
+        }
         case 604800: {
             return "1w";
         }
@@ -703,11 +706,20 @@ export function normalizeTimeframe (timeframe: string): number {
         case "2h": {
             return 7200;
         }
+        case "4h": {
+          return 14400;
+        }
+        case "6h": {
+          return 21600;
+        }
         case "12h": {
             return 43200;
         }
         case "1d": {
             return 86400;
+        }
+        case "3d": {
+          return 259200;
         }
         case "1w": {
             return 604800;
