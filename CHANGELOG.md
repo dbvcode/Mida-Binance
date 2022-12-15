@@ -1,3 +1,6 @@
+### Bug fixes
+* Align and support all Binance timeframes [#5](https://github.com/Reiryoku-Technologies/Mida-Binance/pull/5) | Contribution of https://github.com/Raphael0010
+
 2.1.0 - 16-08-2022
 ===================
 ### Features
