@@ -51,11 +51,14 @@ import {
     warn,
 } from "@reiryoku/mida";
 import {
-    AssetBalance,
     AvgPriceResult,
     Binance,
     CandlesOptions,
-    MyTrade,
+    FuturesAsset,
+    FuturesBalanceResult,
+    // eslint-disable-next-line camelcase
+    FuturesOrderType_LT,
+    FuturesUserTradeResult,
     Symbol as BinanceSymbol,
 } from "binance-api-node";
 import { BinanceFuturesAccountParameters, } from "./BinanceFuturesAccountParameters";
@@ -180,19 +183,20 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
     }
 
     public override async getBalanceSheet (): Promise<MidaAssetStatement[]> {
+
         const balanceSheet: MidaAssetStatement[] = [];
-        const binanceAssets: AssetBalance[] = (await this.#binanceConnection.accountInfo()).balances;
+        const binanceAssets:FuturesBalanceResult[] = await this.#binanceConnection.futuresAccountBalance();
 
         for (const binanceAsset of binanceAssets) {
-            const totalVolume: MidaDecimal = decimal(binanceAsset.free).add(binanceAsset.locked);
+            const totalVolume: MidaDecimal = decimal(binanceAsset.balance).add(binanceAsset.availableBalance);
 
             if (totalVolume.greaterThan(0)) {
                 balanceSheet.push({
                     tradingAccount: this,
                     date: date(),
                     asset: binanceAsset.asset,
-                    freeVolume: decimal(binanceAsset.free),
-                    lockedVolume: decimal(binanceAsset.locked),
+                    freeVolume: decimal(binanceAsset.availableBalance),
+                    lockedVolume: decimal(NaN), // FIXME Don't know which one is the right one decimal(binanceAsset.locked),
                     borrowedVolume: decimal(0),
                 });
             }
@@ -203,7 +207,7 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
 
     public override async getEquity (): Promise<MidaDecimal> {
         const balanceSheet: MidaAssetStatement[] = await this.getBalanceSheet();
-        const lastQuotations: GenericObject = await this.#binanceConnection.allBookTickers();
+        const lastQuotations: GenericObject = await this.#binanceConnection.futuresAllBookTickers();
         let totalPrimaryAssetBalance: MidaDecimal = decimal(0);
 
         for (const assetStatement of balanceSheet) {
@@ -256,7 +260,7 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
 
     public override async getTrades (symbol: string): Promise<MidaTrade[]> {
         const trades: MidaTrade[] = [];
-        const binanceDeals: MyTrade[] = await this.#binanceConnection.myTrades({ symbol, });
+        const binanceDeals:FuturesUserTradeResult[] = await this.#binanceConnection.futuresUserTrades({ symbol, });
 
         for (const binanceDeal of binanceDeals) {
             trades.push(new BinanceFuturesTrade({
@@ -266,11 +270,11 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
                 symbol,
                 commission: decimal(binanceDeal.commission),
                 commissionAsset: binanceDeal.commissionAsset.toString(),
-                direction: binanceDeal.isBuyer ? MidaTradeDirection.BUY : MidaTradeDirection.SELL,
+                direction: binanceDeal.buyer ? MidaTradeDirection.BUY : MidaTradeDirection.SELL,
                 executionDate: date(binanceDeal.time),
                 executionPrice: decimal(binanceDeal.price),
                 id: binanceDeal.id.toString(),
-                purpose: binanceDeal.isBuyer ? MidaTradePurpose.OPEN : MidaTradePurpose.CLOSE,
+                purpose: binanceDeal.buyer ? MidaTradePurpose.OPEN : MidaTradePurpose.CLOSE,
                 status: MidaTradeStatus.EXECUTED,
                 volume: decimal(binanceDeal.qty),
             }));
@@ -335,7 +339,7 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
     }
 
     public override async getOrders (symbol: string): Promise<MidaOrder[]> {
-        const binanceOrders: GenericObject[] = await this.#binanceConnection.allOrders({ symbol, });
+        const binanceOrders: GenericObject[] = await this.#binanceConnection.futuresAllForceOrders({ symbol, });
         const executedOrders: MidaOrder[] = [];
 
         for (const binanceOrder of binanceOrders) {
@@ -350,7 +354,7 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
     }
 
     public override async getPendingOrders (): Promise<MidaOrder[]> {
-        const binanceOrders: GenericObject[] = await this.#binanceConnection.openOrders({});
+        const binanceOrders: GenericObject[] = await this.#binanceConnection.futuresOpenOrders({});
         const pendingOrders: MidaOrder[] = [];
 
         for (const binanceOrder of binanceOrders) {
@@ -386,7 +390,7 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
     }
 
     async #getAssetStatement (asset: string): Promise<MidaAssetStatement> {
-        const balanceSheet: AssetBalance[] = (await this.#binanceConnection.accountInfo()).balances;
+        const balanceSheet: FuturesAsset[] = (await this.#binanceConnection.futuresAccountInfo()).assets;
         const statement: MidaAssetStatement = {
             tradingAccount: this,
             date: date(),
@@ -398,8 +402,8 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
 
         for (const binanceAsset of balanceSheet) {
             if (binanceAsset.asset === asset) {
-                statement.freeVolume = decimal(binanceAsset.free);
-                statement.lockedVolume = decimal(binanceAsset.locked);
+                statement.freeVolume = decimal(binanceAsset.availableBalance);
+                statement.lockedVolume = decimal(binanceAsset.marginBalance); // FIXME dunno if this is the right one
 
                 break;
             }
@@ -415,7 +419,7 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
             return lastTick;
         }
 
-        const lastPlainTick: GenericObject = (await this.#binanceConnection.allBookTickers())[symbol];
+        const lastPlainTick: GenericObject = (await this.#binanceConnection.futuresAllBookTickers())[symbol];
 
         return new MidaTick({
             ask: decimal(lastPlainTick.askPrice),
@@ -435,6 +439,7 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
     }
 
     public override async getSymbolAverage (symbol: string): Promise<MidaDecimal> {
+        // FIXME what is the futures equivalent?
         const response: AvgPriceResult = await this.#binanceConnection.avgPrice({ symbol, }) as AvgPriceResult;
 
         return decimal(response.price);
@@ -442,7 +447,7 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
 
     public override async getSymbolPeriods (symbol: string, timeframe: number): Promise<MidaPeriod[]> {
         const periods: MidaPeriod[] = [];
-        const plainPeriods: GenericObject[] = await this.#binanceConnection.candles(<CandlesOptions> {
+        const plainPeriods: GenericObject[] = await this.#binanceConnection.futuresCandles(<CandlesOptions> {
             symbol,
             interval: normalizeTimeframeForBinance(timeframe),
         });
@@ -481,7 +486,8 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
             return;
         }
 
-        this.#binanceConnection.ws.customSubStream(`${symbol.toLowerCase()}@bookTicker`, (plainTick: GenericObject) => this.#onTick(plainTick));
+        // eslint-disable-next-line max-len
+        this.#binanceConnection.ws.futuresCustomSubStream(`${symbol.toLowerCase()}@bookTicker`, (plainTick: GenericObject) => this.#onTick(plainTick));
         this.#tickListeners.set(symbol, true);
     }
 
@@ -493,7 +499,7 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
         }
 
         // eslint-disable-next-line max-len
-        this.#binanceConnection.ws.candles(symbol, normalizeTimeframeForBinance(timeframe), (plainPeriod: GenericObject) => this.#onPeriodUpdate(plainPeriod));
+        this.#binanceConnection.ws.futuresCandles(symbol, normalizeTimeframeForBinance(timeframe), (plainPeriod: GenericObject) => this.#onPeriodUpdate(plainPeriod));
         listenedTimeframes.push(timeframe);
         this.#periodListeners.set(symbol, listenedTimeframes);
     }
@@ -579,7 +585,8 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
     }
 
     async #preloadSymbols (): Promise<void> {
-        const binanceSymbols: BinanceSymbol[] = (await this.#binanceConnection.exchangeInfo()).symbols;
+        // eslint-disable-next-line camelcase
+        const binanceSymbols: BinanceSymbol<FuturesOrderType_LT>[] = (await this.#binanceConnection.futuresExchangeInfo()).symbols;
 
         this.#symbols.clear();
 
@@ -614,7 +621,7 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
     }
 
     async #configureListeners (): Promise<void> {
-        await this.#binanceConnection.ws.user((update: GenericObject): void => {
+        await this.#binanceConnection.ws.futuresUser((update: GenericObject): void => {
             if (update.eventType === "executionReport" && update.orderId && update.orderStatus.toUpperCase() === "NEW") {
                 this.#onNewOrder(update);
             }
@@ -624,7 +631,8 @@ export class BinanceFuturesAccount extends MidaTradingAccount {
     }
 }
 
-export function getPlainSymbolFilterByType (plainSymbol: BinanceSymbol, type: string): GenericObject | undefined {
+// eslint-disable-next-line camelcase
+export function getPlainSymbolFilterByType (plainSymbol: BinanceSymbol<FuturesOrderType_LT>, type: string): GenericObject | undefined {
     for (const filter of plainSymbol.filters) {
         if (filter.filterType === type) {
             return filter;

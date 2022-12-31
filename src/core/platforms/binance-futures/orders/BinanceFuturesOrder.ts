@@ -35,7 +35,7 @@ import {
     MidaTradePurpose,
     MidaTradeStatus,
 } from "@reiryoku/mida";
-import { Binance, NewOrderSpot, } from "binance-api-node";
+import { Binance, NewFuturesOrder, } from "binance-api-node";
 import { BinanceFuturesAccount, normalizeTimeInForceForBinance, } from "../BinanceFuturesAccount";
 import { BinanceFuturesTrade, } from "../trades/BinanceFuturesTrade";
 import { BinanceFuturesOrderParameters, } from "./BinanceFuturesOrderParameters";
@@ -108,7 +108,7 @@ export class BinanceFuturesOrder extends MidaOrder {
         }
 
         try {
-            await this.#binanceConnection.cancelOrder({ symbol: this.symbol, orderId: Number(this.id), });
+            await this.#binanceConnection.futuresCancelOrder({ symbol: this.symbol, orderId: Number(this.id), });
 
             this.lastUpdateDate = new MidaDate();
             this.onStatusChange(MidaOrderStatus.CANCELLED);
@@ -157,7 +157,7 @@ export class BinanceFuturesOrder extends MidaOrder {
             plainDirectives.timeInForce = normalizeTimeInForceForBinance(directives.timeInForce);
         }
 
-        this.#binanceConnection.order(<NewOrderSpot>plainDirectives).then((plainOrder: GenericObject) => {
+        this.#binanceConnection.futuresOrder(<NewFuturesOrder>plainDirectives).then((plainOrder: GenericObject) => {
             console.log(plainOrder);
             this.#onResponse(plainOrder);
         }).catch((plainError: GenericObject) => {
@@ -189,7 +189,7 @@ export class BinanceFuturesOrder extends MidaOrder {
             default: {
                 console.log(plainOrder);
 
-                throw new Error("Unknonw Binance Spot order response");
+                throw new Error("Unknonw Binance Futures order response");
             }
         }
 
@@ -235,7 +235,7 @@ export class BinanceFuturesOrder extends MidaOrder {
             default: {
                 this.rejection = MidaOrderRejection.UNKNOWN;
 
-                console.log("Unknown Binance Spot API order rejection reason");
+                console.log("Unknown Binance Futures API order rejection reason");
                 console.log(plainError);
                 console.log("This is a warning, your order has just been rejected");
                 console.log("Consult the Binance API documentation to find a complete explanation");
@@ -291,7 +291,7 @@ export class BinanceFuturesOrder extends MidaOrder {
                 status = MidaOrderStatus.REJECTED;
                 this.rejection = MidaOrderRejection.UNKNOWN;
 
-                console.log("Unknonw Binance Spot order reject reason");
+                console.log("Unknonw Binance Futures order reject reason");
                 console.log(descriptor.orderRejectReason);
 
                 break;

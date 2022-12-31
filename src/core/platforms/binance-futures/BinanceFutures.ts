@@ -32,7 +32,7 @@ import { BinanceFuturesAccount, } from "./BinanceFuturesAccount";
 import { BinanceFuturesLoginParameters, } from "./BinanceFuturesLoginParameters";
 
 
-export const PLATFORM_NAME: string = "Binance Spot";
+export const PLATFORM_NAME: string = "Binance Futures";
 export const PLATFORM_SITE_URI: string = "https://www.binance.com";
 export const PLATFORM_PRIMARY_ASSET: string = "USDT";
 
