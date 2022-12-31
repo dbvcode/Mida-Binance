@@ -8,5 +8,5 @@ A [Mida](https://github.com/Reiryoku-Technologies/Mida) plugin for using Binance
 
 ## Supported accounts
 - [x] Binance Spot
-- [ ] Binance Futures
+- [ ] Binance Futures - in the works
 - [ ] Binance Margin

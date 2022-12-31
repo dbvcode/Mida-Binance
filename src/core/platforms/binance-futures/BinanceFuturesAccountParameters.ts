@@ -20,25 +20,9 @@
  * THE SOFTWARE.
 */
 
-import { MidaPlugin, MidaPluginActions, } from "@reiryoku/mida";
-import { BinanceSpot, } from "#platforms/binance-spot/BinanceSpot";
-import { BinanceFutures, } from "./platforms/binance-futures/BinanceFutures";
+import { MidaTradingAccountParameters, } from "@reiryoku/mida";
+import { Binance, } from "binance-api-node";
 
-export const pluginId: string = "2ae5e8d1-1101-4b9c-b6e1-e44497bb2803";
-export const pluginVersion: string = "2.1.1";
-
-export class BinancePlugin extends MidaPlugin {
-    public constructor () {
-        super({
-            id: pluginId,
-            name: "Mida Binance",
-            version: pluginVersion,
-            description: "A Mida plugin for using Binance",
-        });
-    }
-
-    public override install (actions: MidaPluginActions): void {
-        actions.addPlatform("Binance/Spot", new BinanceSpot());
-        actions.addPlatform("Binance/Futures", new BinanceFutures());
-    }
-}
+export type BinanceFuturesAccountParameters = MidaTradingAccountParameters & {
+    binanceConnection: Binance;
+};
